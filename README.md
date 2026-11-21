@@ -18,6 +18,20 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v5: auto game detection, impostor hunting, truth finder
+
+- **Knows exactly which game you're in.** It reads the game info Jackbox already sends to your phone (room code → game ID), so it knows the game even when the name isn't on screen. Then it **switches to that game automatically**:
+  - 😂 **Comedy mode** for Quiplash, Joke Boat and the like.
+  - 🎯 **Accuracy mode** for trivia, minigames and estimates: careful reasoning, low randomness, web search, confidence %.
+  - 🕵️ **Detective mode** for Push the Button, Fakin' It, Weapons Drawn, Hypnotorious and Suspectives.
+  - Game-specific buttons appear at the top: Fibbage gets *🕵️ Find the truth / 🚫 What's the real answer?*, Push the Button gets *🛸 Who is the alien? / 👽 I am the alien*, Fakin' It gets *🔍 Who is faking? / 🎭 I am the faker*, TMP gets *🔎 Look it up / 🧮 Solve carefully*, and more.
+- **🕵️ Impostor case file.** It quietly saves every screen your phone sees during the game (everyone's answers, votes, prompts). Add your own observations with **📝 Save note** ("Mike hesitated", "Jo copied Sarah"). **Find impostor** ranks the suspects with % and evidence, and puts the accuse buttons in order.
+- **🔎 Truth finder.** Live web search (free with Gemini, or with Claude) checks trivia, Fibbage truths, Lie Swatter facts, Timejinx years and Guesspionage percentages. It tells you the real answer so you can vote for it, or avoid typing it as your lie.
+- **Fixes itself.** If the game ignores typed text, it types it another way. If the screen changes before you tap, it re-reads the screen and answers the new one.
+- **Darker Unhinged mode:** explicit sex jokes, death, drugs and brutal roasts are all fair game. The one thing it won't do is slurs or jokes where a race, religion, sexuality or disability is the punchline (those lose votes anyway).
+
+**Honest limits:** the hidden answers (who the faker or alien is, the real Fibbage answer, the other team's secrets) live on Jackbox's server and are **never sent to your phone**, so no script can read them. The helper gets as close as possible: case-file analysis for impostors and web search plus AI knowledge for truths. Rhythm (Dodo Re Mi) and physics flicking (Zeeple Dome) only get tips.
+
 ## Features
 - **Free AI with automatic fallback:** Gemini, Groq, OpenRouter and Pollinations are free; Claude is paid. If one is busy, rate-limited or refuses a joke, it switches to the next.
 - **Game detection + expert playbooks** for each game, plus a free 📖 **offline guide**.

@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      4.0.0
-// @description  Free AI sidekick for every jackbox.tv game: writes, DRAWS, bids, votes, answers trivia, sets sliders. Detects the game and plays like an expert. Free AI built in (no key needed), or plug in free Gemini/Groq/OpenRouter keys, or Claude.
+// @version      5.0.0
+// @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
 // @grant        GM.xmlHttpRequest
@@ -14,7 +14,8 @@
 // @connect      api.groq.com
 // @connect      openrouter.ai
 // @connect      text.pollinations.ai
-// @run-at       document-idle
+// @connect      ecast.jackboxgames.com
+// @run-at       document-start
 // @noframes
 // @updateURL    https://raw.githubusercontent.com/IJDAJDNs/Jaxkbox/claude/keen-dirac-mt2d7f/jackbox-ai-helper.user.js
 // @downloadURL  https://raw.githubusercontent.com/IJDAJDNs/Jaxkbox/claude/keen-dirac-mt2d7f/jackbox-ai-helper.user.js
@@ -24,6 +25,103 @@
   'use strict';
   if (window.__jbaiLoaded) return;
   window.__jbaiLoaded = true;
+
+  // ===========================================================================
+  // Phone connection tap: reads only what Jackbox already sends to THIS phone
+  // (prompts, choices, player names, game id). Server-side secrets never reach
+  // the phone, so they can't be read here.
+  // ===========================================================================
+  const entities = new Map(); // key -> { val, t }
+  let roomCode = null;
+  let appTag = null;
+  let wsSeen = false;
+  (function tapSocket() {
+    const hook = `(() => { if (window.__jbaiWS) return; window.__jbaiWS = 1; const W = window.WebSocket; if (!W) return;
+      const out = (type, data) => { try { document.dispatchEvent(new CustomEvent('jbai-ws', { detail: JSON.stringify({ type, data }) })); } catch (e) {} };
+      function P(url, protos) { const ws = protos === undefined ? new W(url) : new W(url, protos); out('open', String(url));
+        ws.addEventListener('message', (e) => { if (typeof e.data === 'string' && e.data.length < 300000) out('msg', e.data); }); return ws; }
+      P.prototype = W.prototype; try { Object.setPrototypeOf(P, W); } catch (e) {}
+      ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'].forEach((k) => { try { Object.defineProperty(P, k, { value: W[k] }); } catch (e) {} });
+      window.WebSocket = P; })();`;
+    // 1) If this userscript already runs in the page's world, hook directly.
+    try { new Function(hook)(); } catch (_) { /* CSP may forbid eval */ }
+    // 2) From an isolated userscript world, inject into the page (as soon as <html> exists).
+    const inject = () => {
+      try {
+        const sc = document.createElement('script');
+        sc.textContent = hook;
+        (document.head || document.documentElement).appendChild(sc);
+        sc.remove();
+      } catch (_) { /* CSP may block this - screen reading still works */ }
+    };
+    if (document.documentElement) inject();
+    else {
+      const mo = new MutationObserver(() => { if (document.documentElement) { mo.disconnect(); inject(); } });
+      mo.observe(document, { childList: true });
+    }
+    document.addEventListener('jbai-ws', (e) => {
+      let m;
+      try { m = JSON.parse(e.detail); } catch (_) { return; }
+      wsSeen = true;
+      if (m.type === 'open') {
+        const r = String(m.data).match(/rooms\/([A-Z]{4})\b/i);
+        if (r && r[1].toUpperCase() !== roomCode) { roomCode = r[1].toUpperCase(); appTag = null; entities.clear(); lookupRoom(); }
+        return;
+      }
+      onWsMessage(m.data);
+    });
+  })();
+
+  function compactJSON(v, depth) {
+    if (depth > 6) return '…';
+    if (typeof v === 'string') return v.length > 300 ? (/^data:|^[A-Za-z0-9+/=]{200,}$/.test(v) ? '[image]' : v.slice(0, 300) + '…') : v;
+    if (Array.isArray(v)) return v.slice(0, 30).map((x) => compactJSON(x, depth + 1));
+    if (v && typeof v === 'object') {
+      const o = {};
+      for (const [k, x] of Object.entries(v).slice(0, 60)) o[k] = compactJSON(x, depth + 1);
+      return o;
+    }
+    return v;
+  }
+
+  function onWsMessage(raw) {
+    let msg;
+    try { msg = JSON.parse(raw); } catch (_) { return; }
+    const tag = String(raw).match(/"appTag"\s*:\s*"([^"]+)"/);
+    if (tag && tag[1] !== appTag) { appTag = tag[1]; lockedGame = null; }
+    const put = (key, val) => {
+      if (typeof val === 'string') { try { val = JSON.parse(val); } catch (_) { /* keep string */ } }
+      entities.set(String(key), { val: compactJSON(val, 0), t: Date.now() });
+      if (entities.size > 40) entities.delete(entities.keys().next().value);
+    };
+    const r = msg.result || msg.params || msg.body;
+    if (r && r.entities && typeof r.entities === 'object') {
+      for (const [k, v] of Object.entries(r.entities)) put(k, Array.isArray(v) ? v[v.length - 1] && v[v.length - 1].val !== undefined ? v[v.length - 1].val : v : (v && v.val !== undefined ? v.val : v));
+    }
+    if (r && r.key !== undefined && (r.val !== undefined || r.value !== undefined)) put(r.key, r.val !== undefined ? r.val : r.value);
+    else if (msg.opcode && r && !r.entities) put(msg.opcode, r);
+  }
+
+  async function lookupRoom() {
+    if (!roomCode) return;
+    try {
+      const res = await http('GET', 'https://ecast.jackboxgames.com/api/v2/rooms/' + roomCode, {});
+      const b = res.json && (res.json.body || res.json);
+      if (b && b.appTag) { appTag = b.appTag; lockedGame = null; }
+    } catch (_) { /* fine - screen detection still works */ }
+  }
+
+  function gameData() {
+    if (!settings.readConnection || !entities.size) return '';
+    const recent = [...entities.entries()].sort((a, b) => b[1].t - a[1].t).slice(0, 6);
+    let outStr = '';
+    for (const [k, v] of recent) {
+      const line = k + ' = ' + JSON.stringify(v.val);
+      if (outStr.length + line.length > 3500) break;
+      outStr += line + '\n';
+    }
+    return outStr;
+  }
 
   // ===========================================================================
   // Settings
@@ -46,6 +144,8 @@
     autoSubmit: false,
     memory: true,
     drawSpeed: 'fast',
+    webSearch: true, // live search for trivia / truths (Gemini + Claude)
+    readConnection: true, // use the data Jackbox sends to this phone
     fabX: null,
     fabY: null,
     modelCache: {},
@@ -55,7 +155,7 @@
     1: { label: '😇 Family', text: 'FAMILY FRIENDLY. No swearing, no innuendo, nothing gross. Clever, silly, wholesome - kids could be playing.' },
     2: { label: '🙂 Normal', text: 'PG-13. Mild swearing and light innuendo are fine. Cheeky, not crude.' },
     3: { label: '😈 Edgy', text: 'R-RATED. Swearing, sex jokes, gross-out, dark and morbid jokes are all fine. Be bold - the room is adults.' },
-    4: { label: '💀 Unhinged', text: 'UNHINGED / NO FILTER. Adults-only room that explicitly wants the darkest, most shocking, most inappropriate jokes possible: death, sex, drugs, bodily fluids, existential dread, crime, disasters, terrible life choices, brutal roasts of the players by name. Make people gasp, then laugh. Do NOT soften, hedge or sanitize. Only limit: no slurs and no jokes whose whole punchline is "this race/religion/sexuality/disability is bad" - those get groans, not votes.' },
+    4: { label: '💀 Unhinged', text: 'UNHINGED / NO FILTER. Adults-only room that explicitly wants the darkest, filthiest, most shocking jokes possible: explicit sex jokes and innuendo, death, murder, drugs, bodily fluids, diseases, existential dread, crime, disasters, tragedies, terrible life choices, brutal personal roasts of the players by name. Make people gasp, then laugh. Do NOT soften, hedge, sanitize or add disclaimers. Only line: no slurs and no jokes where a race, religion, sexuality or disability is the punchline - those get groans and lose votes; aim the darkness at situations, the players and yourself instead.' },
   };
 
   const PERSONAS = {
@@ -138,7 +238,7 @@
     m.push({ ...entry, t: Date.now() });
     try { sessionStorage.setItem(MEM_KEY, JSON.stringify(m.slice(-30))); } catch (_) { /* ignore */ }
   }
-  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); } catch (_) { /* ignore */ } };
+  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); } catch (_) { /* ignore */ } };
   function bumpStat(k) {
     let s = {};
     try { s = JSON.parse(sessionStorage.getItem(STATS_KEY)) || {}; } catch (_) { /* ignore */ }
@@ -146,6 +246,18 @@
     try { sessionStorage.setItem(STATS_KEY, JSON.stringify(s)); } catch (_) { /* ignore */ }
   }
   const getStats = () => { try { return JSON.parse(sessionStorage.getItem(STATS_KEY)) || {}; } catch (_) { return {}; } };
+
+  // Case file: every distinct screen this phone saw + the player's own notes
+  const OBS_KEY = 'jbai_obs';
+  const loadObs = () => { try { return JSON.parse(sessionStorage.getItem(OBS_KEY)) || []; } catch (_) { return []; } };
+  function addObs(entry) {
+    const o = loadObs();
+    const norm = (x) => String(x || '').replace(/\d+/g, '#').slice(0, 300);
+    if (!entry.note && o.length && norm(o[o.length - 1].text) === norm(entry.text)) return;
+    o.push({ ...entry, t: Date.now() });
+    try { sessionStorage.setItem(OBS_KEY, JSON.stringify(o.slice(-60))); } catch (_) { /* ignore */ }
+  }
+  const clearObs = () => { try { sessionStorage.removeItem(OBS_KEY); } catch (_) { /* ignore */ } };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
@@ -201,6 +313,45 @@
     { id: 'zeeple', name: 'Zeeple Dome', re: /zeeple/, guide: 'Physics flinging game; only quick aiming advice is possible.', tips: ['Aim for the bounce'] },
   ];
 
+  // Exact game from the room's appTag (from the phone's connection)
+  const APPTAGS = {
+    quiplash: /quiplash/, fibbage: /fibbage|fourbage/, tmp: /triviadeath/, drawful: /drawful/, bidiots: /auction|bidiots/, earwax: /earwax/,
+    bombcorp: /bombintern|bombcorp/, wordspud: /wordspud/, lieswatter: /lieswatter/, ydkj: /ydkj/, guesspionage: /pollposition/, teeko: /awshirt|tko|teeko/,
+    fakinit: /fakin/, survive: /survivetheinternet/, monster: /monstermingle/, bracketeering: /bracketeering/, civic: /overdrawn/,
+    splitroom: /split/, madverse: /rapbattle/, patently: /patently/, rolemodels: /rolemodels/, jokeboat: /jokeboat/, dictionarium: /ridictionary/,
+    pushbutton: /pushthebutton/, devils: /everyday/, champdup: /worldchampions/, talkingpoints: /jackbox-talks/, blather: /blanky-blank/,
+    wheel: /the-wheel|enormous/, jobjob: /jobgame/, pollmine: /survey-bomb/, weapons: /murder-?detectives/, roomerang: /htmf/, junktopia: /antique-game/,
+    nonsensory: /range-game/, quixort: /lineup/, fixytext: /fixy/, timejinx: /timejinx/, hypnotorious: /hypnotorious/, suspectives: /suspectives/,
+    cookiehaus: /cookie/, surveyscramble: /survey-?scramble/, dodoremi: /dodo/, zeeple: /slingshoot|zeeple/,
+  };
+  const ACCURACY_GAMES = new Set(['tmp', 'ydkj', 'lieswatter', 'wheel', 'timejinx', 'guesspionage', 'bombcorp', 'quixort', 'surveyscramble', 'pollmine', 'devils']);
+  const DEDUCTION_GAMES = new Set(['pushbutton', 'fakinit', 'hypnotorious', 'suspectives', 'weapons']);
+  const SEARCH_GAMES = new Set(['tmp', 'ydkj', 'lieswatter', 'wheel', 'timejinx', 'quixort', 'fibbage', 'guesspionage']);
+  const DETECTIVE = 'DETECTIVE: Using the CASE FILE, GAME DATA and the screen, work out who the impostor(s) are. Compare every answer to what the real prompt/task was, look for vague, hedged, off-topic or copied answers, odd timing notes, suspicious votes and defending. In advice rank the suspects with a % each and the key evidence. Options = the vote/accuse buttons for your top suspects, best first, each with "why". If the screen says YOU are the impostor/alien/faker: instead give answers and moves that blend in and frame someone else.';
+  const GAME_CHIPS = {
+    fibbage: [['🕵️ Find the truth', 'Voting: identify which choice is the REAL answer. Verify with search if you can. Put the real answer and your confidence % in advice; option 1 = tap the truth.', true], ['🚫 What is the real answer?', 'Tell me the REAL answer to this question in advice (so I avoid typing it) and give lies that sound more true than the truth.', true], ['🤥 Sneakier lie', 'Lies that sound boringly, specifically TRUE - same style and length as a real answer, nothing jokey.']],
+    drawful: [['🕵️ Real title?', 'Voting: which title is the real prompt for this drawing? Confidence % in advice.'], ['🤥 Better lie', 'Lies that sound like real Drawful prompts for this drawing.']],
+    tmp: [['🔎 Look it up', 'Verify the answer with search before answering. Put the correct answer and source in advice.', true], ['🧮 Solve carefully', 'This is a minigame/puzzle: reason step by step and double-check before answering. Explain the rule in advice.']],
+    ydkj: [['🔎 Look it up', 'Decode the wordplay, verify with search, give the correct answer.', true]],
+    lieswatter: [['🔎 Fact-check', 'Verify whether the statement is true with search. Answer correctly.', true]],
+    wheel: [['🔎 Look it up', 'Verify with search and answer correctly.', true]],
+    timejinx: [['🔎 Exact year', 'Look up the exact year with search and set it.', true]],
+    guesspionage: [['📊 Best estimate', 'Estimate the real survey percentage as precisely as possible; explain in advice.', true]],
+    pushbutton: [['🛸 Who is the alien?', DETECTIVE], ['👽 I am the alien', 'I am an alien: give answers that fit what the humans probably saw and point suspicion at someone else.']],
+    fakinit: [['🔍 Who is faking?', DETECTIVE], ['🎭 I am the faker', 'I am the faker: guess the likely task from the category/screen and tell me exactly how to blend in (timing, what to copy).']],
+    weapons: [['🔍 Who did it?', DETECTIVE], ['🔤 Hide my letter', 'Draw a weapon that hides a letter of my name (from the screen) as subtly as possible.']],
+    hypnotorious: [['🔍 Who is who?', DETECTIVE]],
+    suspectives: [['🔍 Who is lying?', DETECTIVE]],
+    quiplash: [['🏆 Safe winner', 'Give answers that win with ANY crowd - broad, punchy, sure-fire.'], ['🎲 Wildcard', 'Give one-in-a-million wildcard answers that either bomb or get a QUIPLASH.']],
+    bidiots: [['💰 What is it worth?', 'Using any secret info on screen, estimate each painting\'s value and tell me what to bid.']],
+    splitroom: [['⚖️ Perfect 50/50', 'Make the dilemma split the room as close to exactly 50/50 as possible.']],
+    jobjob: [['🧩 Best sentence', 'Build the funniest coherent answer using ONLY my word bank words, tapped in order.']],
+    teeko: [['👕 Best shirt', 'Pick or make the shirt the room will vote for.']],
+    blather: [['🎯 Best words', 'Pick the most precise words so others guess fastest.']],
+  };
+  const isAccuracy = (g) => !!g && ACCURACY_GAMES.has(g.id);
+  const isDeduction = (g) => !!g && DEDUCTION_GAMES.has(g.id);
+
   function fingerprint() {
     const bits = [document.title];
     for (const el of document.querySelectorAll('[id], [class]')) {
@@ -215,6 +366,11 @@
 
   let lockedGame = null;
   function detectGame(text) {
+    if (appTag) {
+      const t = appTag.toLowerCase();
+      const g = GAMES.find((x) => APPTAGS[x.id] && APPTAGS[x.id].test(t));
+      if (g) { lockedGame = g; g.via = 'connection'; return g; }
+    }
     const hay = (fingerprint() + ' ' + (text || '')).toLowerCase();
     let best = null, bestScore = 0;
     for (const g of GAMES) {
@@ -372,7 +528,8 @@
   function readContext(tweak) {
     const items = inventory();
     const text = screenText();
-    return { screenText: text, items, submitGuess: guessSubmit(items), images: screenImages(), tweak, game: detectGame(text), kind: screenKind(items) };
+    const game = detectGame(text);
+    return { screenText: text, items, submitGuess: guessSubmit(items), images: screenImages(), tweak, game, kind: screenKind(items), accuracy: isAccuracy(game), search: settings.webSearch && !!game && SEARCH_GAMES.has(game.id) };
   }
 
   // ===========================================================================
@@ -394,6 +551,9 @@ DRAWING: canvas coords x 0-1000, y 0-H (H given per canvas). Shapes in order:
 Optional per shape: "color": <swatch element index> (stays selected until changed - set it whenever it changes), "brush": <brush-size element index>. "fill" scribble-fills.
 Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fills first, outlines and details on top, then the one funny detail that sells it. 15-60 shapes. Faces = eyes + expressive mouth. No written words unless the game wants labels.
 
+GAME DATA (when present) is the raw state Jackbox sent to this phone - prompts, choices, player names, scores, sometimes details not drawn on screen. Trust it over guesses; never invent data. The CASE FILE is every screen this phone saw this game plus the player's own notes.
+TRUTH: if you have a web search tool, use it to verify facts (trivia, Fibbage/Lie Swatter truths, years, percentages) and say the real answer in advice. Never claim to know a hidden server-side secret (who the faker/alien is) unless it is in the data.
+
 COMEDY: silently brainstorm 15+ ideas, throw away the first 5 (everyone else writes those), return the best. Specific beats generic (real brands, celebrities, places, oddly precise numbers). Short. Funniest word LAST. Misdirection, escalation, brutal honesty, callbacks, roast players by name (names are on screen). Every option a different angle. For trivia/estimates/logic: be CORRECT - think carefully, humor irrelevant.
 
 Respond with ONLY a JSON object (no markdown, no comments):
@@ -408,8 +568,18 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     if (!ctx.items.length) L.push('  (none)');
     ctx.items.forEach((it, i) => L.push(`  [${i}] ${it.desc}`));
     if (ctx.images.length) L.push(`\n(${ctx.images.length} image(s) of the screen attached.)`);
-    if (ctx.game) L.push(`\nDETECTED GAME: ${ctx.game.name}\nPLAYBOOK: ${ctx.game.guide}`);
-    else L.push('\nGAME: not detected - infer it from the screen (any Jackbox Party Pack 1-11 game or standalone).');
+    if (ctx.game) L.push(`\nDETECTED GAME: ${ctx.game.name}${ctx.game.via === 'connection' ? ' (certain - from the room data)' : ''}\nPLAYBOOK: ${ctx.game.guide}`);
+    else L.push(`\nGAME: ${appTag ? 'room app tag "' + appTag + '" - ' : ''}not in my list - infer it from the screen (any Jackbox Party Pack 1-11 game or standalone).`);
+    const gd = gameData();
+    if (gd) L.push('\nGAME DATA (from this phone\'s connection):\n' + gd);
+    const obs = loadObs();
+    const wantCase = ctx.detective || isDeduction(ctx.game);
+    if (obs.length) {
+      L.push(`\nCASE FILE (${wantCase ? 'full' : 'recent'}):`);
+      obs.slice(wantCase ? -25 : -3).forEach((o) => L.push(o.note ? `  NOTE from player: ${o.note}` : `  SCREEN: ${clean(o.text, wantCase ? 500 : 220)}`));
+    }
+    if (ctx.accuracy) L.push('\nACCURACY MODE: correctness is everything here. Ignore humor level and voice. Reason carefully, double-check, and only then answer. Give your confidence % in advice.');
+    if (isDeduction(ctx.game) && !ctx.tweak) L.push('\n' + DETECTIVE);
     const mem = settings.memory ? loadMemory() : [];
     if (mem.length) {
       L.push('\nEARLIER THIS GAME (callbacks welcome, never repeat):');
@@ -507,7 +677,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   }
   function forgetModel(provider) { delete settings.modelCache[provider]; store.set('modelCache', settings.modelCache); }
 
-  async function callClaude(sys, user, images, primary) {
+  async function callClaude(sys, user, images, primary, opt = {}) {
     const content = images.map((data) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data } }));
     content.push({ type: 'text', text: user });
     const model = (primary && settings.customModel) || settings.claudeModel;
@@ -517,9 +687,12 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       'anthropic-version': '2026-10-21',
       'anthropic-dangerous-direct-browser-access': 'true',
     };
-    const body = { model, max_tokens: 16000, system: sys, output_config: { effort: settings.effort }, messages: [{ role: 'user', content }] };
+    const effort = opt.accuracy && settings.effort === 'low' ? 'medium' : settings.effort;
+    const body = { model, max_tokens: 16000, system: sys, output_config: { effort }, messages: [{ role: 'user', content }] };
     if (/opus|sonnet/.test(model)) { headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; body.fallbacks = 'default'; }
-    const res = await http('POST', 'https://api.anthropic.com/v1/messages', headers, body);
+    if (opt.search) body.tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }];
+    let res = await http('POST', 'https://api.anthropic.com/v1/messages', headers, body);
+    if (opt.search && res.status === 400) { delete body.tools; res = await http('POST', 'https://api.anthropic.com/v1/messages', headers, body); }
     if (res.status >= 400 || !res.json) throw apiErr('Claude', res);
     const d = res.json;
     if (d.stop_reason === 'refusal') { const e = new Error('Claude passed on this one'); e.retry = true; e.refusal = true; throw e; }
@@ -541,18 +714,28 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     })) || 'gemini-3.8-flash';
   }
 
-  async function callGemini(sys, user, images, primary) {
+  async function callGemini(sys, user, images, primary, opt = {}) {
     const model = await geminiModel(primary);
     const parts = images.map((data) => ({ inline_data: { mime_type: 'image/jpeg', data } }));
     parts.push({ text: user });
-    const threshold = settings.spice >= 3 ? 'BLOCK_ONLY_HIGH' : 'BLOCK_MEDIUM_AND_ABOVE';
+    const base = settings.spice >= 3 ? 'BLOCK_ONLY_HIGH' : 'BLOCK_MEDIUM_AND_ABOVE';
+    const loose = settings.spice >= 4 ? 'BLOCK_NONE' : base;
+    const thresholds = { HARM_CATEGORY_HARASSMENT: loose, HARM_CATEGORY_SEXUALLY_EXPLICIT: loose, HARM_CATEGORY_HATE_SPEECH: base, HARM_CATEGORY_DANGEROUS_CONTENT: base };
+    const temperature = opt.accuracy ? 0.2 : settings.mode === 'chaos' ? 1.3 : 1.0;
     const body = {
       systemInstruction: { parts: [{ text: sys }] },
       contents: [{ role: 'user', parts }],
-      generationConfig: { temperature: settings.mode === 'chaos' ? 1.3 : 1.0, maxOutputTokens: 8192, responseMimeType: 'application/json' },
-      safetySettings: ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT'].map((category) => ({ category, threshold })),
+      generationConfig: { temperature, maxOutputTokens: 8192, responseMimeType: 'application/json' },
+      safetySettings: Object.entries(thresholds).map(([category, threshold]) => ({ category, threshold })),
     };
-    const res = await http('POST', `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'content-type': 'application/json', 'x-goog-api-key': settings.geminiKey }, body);
+    if (opt.search) { body.tools = [{ google_search: {} }]; delete body.generationConfig.responseMimeType; } // grounding can't combine with JSON mode
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+    const hdr = { 'content-type': 'application/json', 'x-goog-api-key': settings.geminiKey };
+    let res = await http('POST', url, hdr, body);
+    if (opt.search && [400, 403, 429].includes(res.status)) { // search quota/unsupported: answer without it
+      delete body.tools; body.generationConfig.responseMimeType = 'application/json';
+      res = await http('POST', url, hdr, body);
+    }
     if (res.status === 404) forgetModel('gemini');
     if (res.status >= 400 || !res.json) { const e = apiErr('Gemini', res); if (res.status === 404) e.retry = true; throw e; }
     const d = res.json;
@@ -604,7 +787,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     })) || cfg.fallback;
   }
 
-  async function callOAI(p, sys, user, images, primary) {
+  async function callOAI(p, sys, user, images, primary, opt = {}) {
     const cfg = OAI[p];
     const model = await oaiModel(p, primary);
     const key = PROVIDERS[p].keyName ? settings[PROVIDERS[p].keyName] : '';
@@ -616,7 +799,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
         model,
         messages: [{ role: 'system', content: sys }, { role: 'user', content }],
         max_tokens: 6000,
-        temperature: settings.mode === 'chaos' ? 1.2 : 0.95,
+        temperature: opt.accuracy ? 0.2 : settings.mode === 'chaos' ? 1.2 : 0.95,
       };
       if (!cfg.noJsonMode) body.response_format = { type: 'json_object' };
       const headers = { 'content-type': 'application/json' };
@@ -634,16 +817,17 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     return { text, model: res.json.model || model };
   }
 
-  function callProvider(p, sys, user, images, primary) {
-    if (p === 'claude') return callClaude(sys, user, images, primary);
-    if (p === 'gemini') return callGemini(sys, user, images, primary);
-    return callOAI(p, sys, user, images, primary);
+  function callProvider(p, sys, user, images, primary, opt) {
+    if (p === 'claude') return callClaude(sys, user, images, primary, opt);
+    if (p === 'gemini') return callGemini(sys, user, images, primary, opt);
+    return callOAI(p, sys, user, images, primary, opt);
   }
 
   // Robust JSON extraction for less disciplined models
   function extractJSON(text) {
     let t = String(text).replace(/```(?:json)?/gi, '').trim();
-    const s = t.indexOf('{');
+    const starts = [...t.matchAll(/\{\s*"(game|options|ok)"/g)];
+    const s = starts.length ? starts[starts.length - 1].index : t.indexOf('{');
     if (s === -1) throw new Error('no JSON');
     let depth = 0, inStr = false, esc = false, end = -1;
     for (let i = s; i < t.length; i++) {
@@ -686,11 +870,11 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       setStatus(`Asking ${PROVIDERS[p].label}…`);
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const { text, model } = await callProvider(p, SYSTEM_PROMPT, user, ctx.images, i === 0);
+          const { text, model } = await callProvider(p, SYSTEM_PROMPT, user, ctx.images, i === 0, { search: ctx.search, accuracy: ctx.accuracy });
           let obj;
           try { obj = extractJSON(text); } catch (_) { const e = new Error(PROVIDERS[p].label + ' gave a messy answer'); e.retry = true; e.parse = true; throw e; }
           const r = normalize(obj, ctx);
-          r.via = PROVIDERS[p].label + (model ? ' · ' + String(model).replace(/^.*\//, '') : '');
+          r.via = PROVIDERS[p].label + (model ? ' · ' + String(model).replace(/^.*\//, '') : '') + (ctx.search && (p === 'gemini' || p === 'claude') ? ' · 🔎' : '');
           return r;
         } catch (e) {
           errors.push(e);
@@ -727,6 +911,10 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     }
     if (el.maxLength > 0) text = text.slice(0, el.maxLength);
     setNative(el, text);
+    if (el.value !== text) { // some inputs ignore programmatic values: type it like a keyboard would
+      try { el.select(); document.execCommand('insertText', false, text); } catch (_) { /* ignore */ }
+      if (el.value !== text) setNative(el, text);
+    }
   }
 
   function setValue(el, value) {
@@ -922,7 +1110,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     let drew = false;
     for (const a of opt.actions) {
       const it = ctx.items[a.el];
-      if (!it || !it.el.isConnected) throw new Error('The screen changed - tap ✨ again.');
+      if (!it || !it.el.isConnected) { const e = new Error('The screen changed'); e.changed = true; throw e; }
       if (a.do === 'type') {
         if (it.kind === 'number') setValue(it.el, a.text);
         else if (it.kind === 'text') typeInto(it, String(a.text || ''));
@@ -1001,6 +1189,8 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       .chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; margin-bottom: 4px; scrollbar-width: none; }
       .chip { flex: 0 0 auto; background: #262634; color: #fff; border: 1px solid #3a3a4c; border-radius: 999px; padding: 7px 11px; font-size: 13px; }
       .chip.on { background: #7b5cff; border-color: #7b5cff; }
+      .chip.game { background: #3b2a66; border-color: #7b5cff; }
+      .gamebar { margin-bottom: 8px; }
       .card { background: #20202c; border: 1px solid #353546; border-radius: 14px; margin: 8px 0; overflow: hidden; }
       .card.best { border-color: #7b5cff; box-shadow: 0 0 0 1px #7b5cff inset; }
       .card .use { display: block; width: 100%; text-align: left; background: none; color: #fff; border: none; padding: 11px 12px 6px; font-size: 16px; line-height: 1.3; }
@@ -1045,6 +1235,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
         <button class="btn" data-act="close">✕</button>
       </div>
       <div class="view main">
+        <div class="gamebar"></div>
         <div class="chips">
           <button class="chip" data-tweak="Way darker and more shocking. Push it further.">🔥 Darker</button>
           <button class="chip" data-tweak="Cleaner - safe for anyone in the room, still funny.">😇 Cleaner</button>
@@ -1055,6 +1246,9 @@ Lobby/waiting screen: "options":[] and a short advice.`;
           <button class="chip" data-tweak="Pop culture: reference memes, movies, shows, celebrities, viral moments.">📺 Pop culture</button>
           <button class="chip" data-tweak="For drawings: much more detailed and colorful, 50-80 shapes, more color fills.">🎨 Fancier art</button>
           <button class="chip" data-act="punch">✍️ Punch up mine</button>
+          <button class="chip" data-act="detective">🕵️ Find impostor</button>
+          <button class="chip" data-act="lookup">🔎 Look it up</button>
+          <button class="chip" data-act="note">📝 Save note</button>
           <button class="chip" data-tweak="Explain what is happening on this screen and exactly what I should do to win. Put the explanation in advice; still give options if there is something to do.">❓ Explain</button>
         </div>
         <div class="row">
@@ -1127,6 +1321,8 @@ Lobby/waiting screen: "options":[] and a short advice.`;
         <label>Answers per tap</label>
         <select data-k="count"><option value="3">3</option><option value="5">5</option><option value="8">8</option></select>
         <label class="ck"><input type="checkbox" data-k="memory"> Remember earlier rounds for callbacks</label>
+        <label class="ck"><input type="checkbox" data-k="webSearch"> 🔎 Web search for trivia &amp; truths (Gemini / Claude)</label>
+        <label class="ck"><input type="checkbox" data-k="readConnection"> 📡 Use game data from my phone's connection</label>
         <div class="row" style="margin-top:14px">
           <button class="btn primary" data-act="save">Save</button>
           <button class="btn" data-act="forget">New game</button>
@@ -1178,7 +1374,18 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     $('.modes').innerHTML = Object.entries(MODES).map(([k, v]) => `<button class="chip${settings.mode === k ? ' on' : ''}" data-mode="${k}">${esc(v[0])}</button>`).join('') +
       `<button class="chip" data-act="settings">${esc(SPICE[settings.spice].label)}</button><button class="chip" data-act="settings">${esc(PERSONAS[settings.persona][0])}</button>`;
   }
-  function refreshGameName(g) { $('.gname').textContent = g ? g.name : 'Jackbox AI'; }
+  let shownGame = null;
+  function refreshGameUI(g) {
+    $('.gname').textContent = g ? g.name : 'Jackbox AI';
+    if (g === shownGame && $('.gamebar').dataset.ready) return;
+    shownGame = g;
+    const bar = $('.gamebar');
+    bar.dataset.ready = '1';
+    if (!g) { bar.innerHTML = roomCode ? `<span class="muted">📡 Room ${esc(roomCode)}${appTag ? ' · ' + esc(appTag) : ''}</span>` : ''; return; }
+    const modeTxt = isDeduction(g) ? '🕵️ Detective mode' : isAccuracy(g) ? '🎯 Accuracy mode' + (settings.webSearch ? ' + 🔎 search' : '') : SEARCH_GAMES.has(g.id) ? '🔎 Truth-finder ready' : '😂 Comedy mode';
+    const chips = (GAME_CHIPS[g.id] || []).map((c, i) => `<button class="chip game" data-gchip="${i}">${esc(c[0])}</button>`).join('');
+    bar.innerHTML = `<div class="muted">🎮 <b>${esc(g.name)}</b> ${g.via === 'connection' ? '(confirmed)' : '(detected)'} → ${modeTxt}${roomCode ? ' · room ' + esc(roomCode) : ''}</div>${chips ? `<div class="chips" style="margin-top:6px">${chips}</div>` : ''}`;
+  }
 
   function fillSettings() {
     root.querySelectorAll('.settings [data-k]').forEach((el) => {
@@ -1229,12 +1436,16 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   // ---------------------------------------------------------------------------
   // Running a request
   // ---------------------------------------------------------------------------
-  async function run(tweak, quiet) {
+  async function run(tweak, quiet, flags = {}) {
     if (busy || drawing) return;
     if (!quiet) { panel.classList.add('open'); showView('main'); }
     const extra = $('.extra').value.trim();
     const ctx = readContext([extra, tweak].filter(Boolean).join(' '));
-    refreshGameName(ctx.game);
+    ctx.retried = !!flags.retried;
+    if (flags.search && settings.webSearch) ctx.search = true;
+    if (flags.detective) ctx.detective = true;
+    if (flags.accuracy) ctx.accuracy = true;
+    refreshGameUI(ctx.game);
     if (!ctx.items.length && !extra && !tweak) {
       if (!quiet) setOut(`<span class="muted">Nothing to tap on this screen yet. Tap ✨ when a prompt, drawing pad or choices show up.${ctx.game ? ' Meanwhile 📖 has tips for ' + esc(ctx.game.name) + '.' : ''}</span>`);
       return;
@@ -1249,7 +1460,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       const result = await ask(ctx);
       ctx.result = result;
       render(result, ctx, ((Date.now() - t0) / 1000).toFixed(1));
-      if (settings.mode === 'autopilot' && !tweak && result.options.length) pilot = result.options[0];
+      if ((settings.mode === 'autopilot' || ctx.retried) && (!tweak || ctx.retried) && result.options.length) pilot = result.options[0];
       else if (quiet && !panel.classList.contains('open')) fab.classList.add('ready');
     } catch (e) {
       setOut('<span class="err">' + esc(e.message || e) + '</span>' + (ctx.game ? `<div class="advice" style="margin-top:8px">📖 Offline tip for ${esc(ctx.game.name)}: ${esc(ctx.game.tips.join(' · '))}</div>` : ''));
@@ -1321,6 +1532,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       panel.classList.remove('open');
       const o = result.options[i];
       try { await execute(o, ctx, submit); } catch (e) {
+        if (e.changed && !ctx.retried) { toast('Screen changed - re-reading it…'); setTimeout(() => run(ctx.tweak, false, { retried: true }), 300); return; }
         const t = typedOf(o).join('\n') || o.text;
         if (t) { copyText(t); toast('Screen moved - copied instead 📋'); } else toast(e.message);
       }
@@ -1358,8 +1570,13 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   // Events
   // ---------------------------------------------------------------------------
   root.addEventListener('click', async (e) => {
-    const t = e.target.closest ? e.target.closest('[data-act],[data-tweak],[data-v],[data-mode],[data-preset]') : null;
+    const t = e.target.closest ? e.target.closest('[data-act],[data-tweak],[data-v],[data-mode],[data-preset],[data-gchip]') : null;
     if (!t) return;
+    if (t.dataset.gchip !== undefined) {
+      const c = shownGame && (GAME_CHIPS[shownGame.id] || [])[+t.dataset.gchip];
+      if (c) run(c[1], false, { search: !!c[2], detective: c[1] === DETECTIVE, accuracy: !!c[2] || isAccuracy(shownGame) });
+      return;
+    }
     if (t.dataset.tweak) { run(t.dataset.tweak); return; }
     if (t.dataset.mode) { await save('mode', t.dataset.mode); refreshBadges(); toast(MODES[t.dataset.mode][0]); return; }
     if (t.dataset.preset) { $('.settings [data-k="style"]').value = ROOM_PRESETS[t.dataset.preset]; return; }
@@ -1378,7 +1595,14 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     else if (a === 'save') saveSettings();
     else if (a === 'test') { await saveSettings(true); testAI(); }
     else if (a === 'go') run();
-    else if (a === 'forget') { clearMemory(); lockedGame = null; toast('New game - memory cleared'); }
+    else if (a === 'forget') { clearMemory(); clearObs(); lockedGame = null; shownGame = undefined; toast('New game - memory & case file cleared'); }
+    else if (a === 'detective') run(DETECTIVE, false, { detective: true });
+    else if (a === 'lookup') run('Verify the facts with search and give the correct / true answer. Put the real answer and confidence % in advice.', false, { search: true, accuracy: true });
+    else if (a === 'note') {
+      const n = $('.extra').value.trim();
+      if (!n) { toast('Type a note in the box first (e.g. "Mike hesitated")'); return; }
+      addObs({ note: n }); $('.extra').value = ''; toast('📝 Saved to case file');
+    }
     else if (a === 'punch') {
       const mine = inventory().filter((i) => i.kind === 'text').map((i) => i.el.value || i.el.innerText).filter(Boolean).join(' / ');
       if (!mine) { toast('Type your answer in the game first'); return; }
@@ -1437,7 +1661,15 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     const shape = items.map((i) => i.kind + ':' + i.desc.replace(/current=("[^"]*"|\S+)/g, '').replace(/\(selected\)/g, '')).join('|');
     return kind + '|' + screenText().replace(/\d+/g, '#').slice(0, 300) + '|' + shape;
   }
+  let obsTimer = null;
   const observer = new MutationObserver(() => {
+    clearTimeout(obsTimer);
+    obsTimer = setTimeout(() => {
+      const txt = screenText();
+      if (txt.length > 20) addObs({ text: txt.slice(0, 700) });
+      const g = detectGame(txt);
+      if (g !== shownGame) refreshGameUI(g);
+    }, 1200);
     if (settings.autoMode === 'off' || busy || drawing) return;
     const now = Date.now();
     if (!pendingSince) pendingSince = now;
@@ -1457,7 +1689,8 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   // ===========================================================================
   // Boot
   // ===========================================================================
-  loadSettings().then(() => {
+  const domReady = () => new Promise((r) => (document.body ? r() : document.addEventListener('DOMContentLoaded', () => r(), { once: true })));
+  Promise.all([loadSettings(), domReady()]).then(() => {
     refreshBadges();
     if (settings.fabX !== null && settings.fabY !== null) {
       const x = Math.min(innerWidth - 60, Math.max(4, settings.fabX));
