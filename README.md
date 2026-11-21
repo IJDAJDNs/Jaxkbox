@@ -1,41 +1,77 @@
-# Jackbox AI Helper (iPhone userscript)
+# ✨ Jackbox AI Helper (iPhone)
 
-Adds a ✨ button to **jackbox.tv** in Safari. Tap it when a prompt is on screen and Claude reads your phone screen, figures out which game you're in, and suggests answers to win the vote. Tap a suggestion to drop it into the text box, then hit the game's own Submit button.
+An AI sidekick for **jackbox.tv** in Safari. When a prompt shows up, tap ✨ and Claude reads your phone screen, figures out the game, and gives you answers built to win the vote. Tap one and it's typed in for you. Hit Submit. Collect the votes.
 
-Works across the Party Packs because it reads whatever is on screen rather than hard-coding each game:
+## What it does
 
-| Game type | What it does |
+- **Works across the Party Packs**: Quiplash (incl. Thriplash), Fibbage (lies that fool people, and **spotting the truth when voting**), Trivia Murder Party, Job Job (uses only your word bank), Tee K.O., Champ'd Up, Survive the Internet, Mad Verse City, Joke Boat, Drawful (sees your phone's drawing) and more.
+- **Humor dial**: 😇 Family · 🙂 Normal · 😈 Edgy · 💀 Unhinged (dark, crude, no-filter adult humor).
+- **One-tap remixes**: 🔥 Darker, 😇 Cleaner, 🤪 Weirder, ✂️ Shorter, 🧠 Clever, 🎯 Roast (roasts other players by name).
+- **✍️ Punch up mine**: type your own idea in the game box, tap this, and it makes your joke land harder.
+- **🔁 More like this** on any answer you like, and **📋 copy** if the game box moved.
+- **Voting help**: tells you which answer to vote for (or which Fibbage answer is the real one) and can tap it for you, with a backup pick.
+- **Game memory**: remembers earlier prompts and your answers so it can make callbacks and running jokes.
+- **Auto-suggest** (optional): answers are ready before you even tap. A green dot on ✨ means they're waiting.
+- **Room notes**: tell it about your group once ("Jake is always late, we love Shrek") and it uses that.
+- Drag the ✨ button anywhere so it doesn't cover the game.
+
+## Install on iPhone (about 5 minutes)
+
+### 1. Get an API key (one time)
+1. Go to **console.anthropic.com** and sign up.
+2. Under **Billing**, add a few dollars of credit. $5 lasts many game nights.
+3. Under **API Keys**, tap **Create Key** and copy it (starts with `sk-ant-`). Paste it into Notes for now.
+
+### 2. Install the Userscripts app
+1. Install **Userscripts** (by Justin Wasack, free) from the App Store.
+2. Open it once. If it asks for a folder, tap **Set Userscripts Directory** and pick or create a folder (e.g. *On My iPhone → Userscripts*).
+3. Go to **Settings → Apps → Safari → Extensions → Userscripts**:
+   - Turn it **on**.
+   - Under **Permissions**, set **jackbox.tv** (or All Websites) to **Allow**.
+
+### 3. Install the script
+1. In **Safari** on your iPhone, open:
+   **https://raw.githubusercontent.com/IJDAJDNs/Jaxkbox/claude/keen-dirac-mt2d7f/jackbox-ai-helper.user.js**
+2. Tap the **puzzle piece / aA** button in the address bar, then **Userscripts**.
+3. It shows **"Userscript Detected"**. Tap **Install**.
+
+*If that doesn't show up:* on the page above, tap Share → **Save to Files** and save it into the Userscripts folder from step 2.
+
+### 4. First run
+1. Open **jackbox.tv** in Safari and join a game. The pink ✨ button appears bottom-right.
+   (No button? Tap the puzzle piece → Userscripts and make sure it's allowed on this site, then reload.)
+2. Tap ✨. Settings open the first time. Paste your API key.
+3. Pick your humor level, add notes about your group, and tap **Save**.
+
+## Playing with it
+
+1. A prompt appears → tap **✨**.
+2. A few seconds later you get answers. **Tap one** and it fills the game's box.
+3. Tap the game's **Submit**.
+
+Tips:
+- Want something different? Tap a chip (🔥 Darker, 🎯 Roast…) or type a direction in the box ("about Sarah's cat") and tap **Go**.
+- Jackbox timers are short. Keep **Speed = Fast**. If it's still slow, switch the model to **Sonnet 5.5** or **Haiku 5.5**.
+- Turn on **Auto-suggest** in ⚙️ so answers are ready the moment a prompt appears. It costs a bit more since it runs on every prompt.
+- Starting a new game with different people? ⚙️ → **Forget this game** clears the callback memory.
+
+## Cost
+
+You pay Anthropic per tap. Roughly: **Haiku** is a fraction of a cent, **Sonnet** about a cent, **Opus** a few cents. A full night of Quiplash on Opus is usually well under a dollar.
+
+## Troubleshooting
+
+| Problem | Fix |
 |---|---|
-| Quiplash / Thriplash | Short, surprising punchlines (fills all 3 boxes for Thriplash) |
-| Fibbage / Enough About You | Believable **lies** that fool people, not the real answer |
-| Job Job | Builds answers using only the words in your word bank |
-| Tee K.O., Champ'd Up, Survive the Internet, Joke Boat, etc. | Slogans, names, and twisted captions |
-| Trivia (Trivia Murder Party, etc.) | Picks the correct answer |
-| Voting / multiple-choice screens | Suggests which button to tap and can tap it for you |
-| Drawing games | If a drawing is on your phone's canvas, it's sent as an image for context |
+| No ✨ button | Puzzle piece → Userscripts → allow on jackbox.tv, then reload. Check the extension is on in Safari settings. |
+| "API key rejected" | Re-copy the key into ⚙️. Make sure there are no extra spaces. |
+| "Rate limited / out of credit" | Add credit at console.anthropic.com → Billing. |
+| "The AI passed on this one" | Rare on very extreme prompts. Tap 😇 Cleaner or drop the humor level one notch. |
+| Answer doesn't fill the box | Use 📋 and paste it in. Jackbox may have changed their page. |
+| Too slow | Model → Sonnet 5.5 or Haiku 5.5, Speed → Fast. |
 
-## Install on iPhone
+## Updating
 
-1. Install the free **Userscripts** app (by Justin Wasack) from the App Store.
-2. Open the app and pick a folder for your scripts (e.g. in iCloud Drive or On My iPhone).
-3. Go to **Settings → Apps → Safari → Extensions → Userscripts**, turn it on, and set **All Websites** (or just jackbox.tv) to **Allow**.
-4. Save `jackbox-ai-helper.user.js` into the folder from step 2. (Or open the raw file in Safari, tap the Userscripts **aA** / puzzle icon, and choose to install it.)
-5. Open **https://jackbox.tv** in Safari and join a game. You should see the purple ✨ button in the bottom-right.
-6. Tap ✨, then ⚙️, paste your Anthropic API key (get one at console.anthropic.com), and tap **Save**.
+The script checks this GitHub link for new versions. To update by hand, open the install link again and tap Install.
 
-## Using it
-
-- Tap ✨ when a prompt appears. Suggestions show up in a few seconds; tap one to fill it in.
-- Type something in the box (like "more savage", "about Sarah", "keep it clean") and tap **Go** to steer the next batch.
-- In ⚙️ settings:
-  - **Model**: Opus 5.5 is the best. Sonnet 5.5 and Haiku 5.5 are faster and cheaper.
-  - **Effort**: keep it on *Low* so answers arrive before the timer runs out.
-  - **Audience / humor style**: describe your group once (e.g. "college friends, dark humor OK") and every suggestion follows it.
-  - **Auto-suggest**: fetches suggestions automatically each time a new prompt appears. This makes more API calls.
-
-## Notes
-
-- Your API key is stored only in the Userscripts app's storage on your phone, and it is sent only to `api.anthropic.com`.
-- Each tap is one API call. On Haiku that's a fraction of a cent; on Opus it's still only a few cents.
-- Jackbox sometimes changes its web page. If a field doesn't fill in, you can still read the suggestion and type it yourself.
-- It's a party game, so maybe tell your friends you have an AI sidekick 😉
+Your API key stays on your phone and is only ever sent to `api.anthropic.com`.
