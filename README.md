@@ -18,6 +18,18 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v8.0: answers ON the game screen + 🔬 X-ray
+
+- **🎯 On-screen overlay.** Answers now appear as labels pinned right on top of the game's own buttons, so you don't have to open the panel:
+  - **Bidiots:** "💰 worth ~$2,400" over each painting, and "🎯 set to 1800" with a glowing ring on the bid slider.
+  - **Trivia:** a green "✅ best pick" ring on the right answer, plus "2nd" on the runner-up.
+  - **Fibbage/Drawful voting:** truth % on each choice. **Impostor games:** suspect % on each player.
+  - A tip bar beside ✨ shows the top answer; tap it to open the panel.
+  - Labels never block your taps, follow the screen when it scrolls, and disappear when the screen changes. Turn it off in ⚙️ if you want.
+- **🔬 X-ray, no AI needed.** It reads everything the game sends your phone and pulls out anything that looks like a hidden value (price, worth, correct, role, score…). When those values belong to something on screen, they're pinned on it in blue instantly, with no AI call. The 🔬 button shows the full list and the raw data, and the AI gets the values too.
+  - **Honest limit:** most secret answers (trivia answers, painting worth, who the faker is) stay on the host TV/PC and are never sent to phones. X-ray shows them whenever a game does send them; otherwise the AI estimates.
+- **Cooler UI:** labels pop in, the best answer gets a glowing ring, and the top card pulses.
+
 ## 🆕 v7.0: instant answers, learns your taste, safer Auto
 
 - **⚡ button now has 3 modes:** tap to cycle **OFF → READY → AUTO**.

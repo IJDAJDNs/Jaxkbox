@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      7.0.0
+// @version      8.0.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -35,6 +35,7 @@
   let roomCode = null;
   let appTag = null;
   let wsSeen = false;
+  let wsHudTimer = null; // re-pin X-ray labels shortly after new game data arrives
   (function tapSocket() {
     const hook = `(() => { if (window.__jbaiWS) return; window.__jbaiWS = 1; const W = window.WebSocket; if (!W) return;
       const out = (type, data) => { try { document.dispatchEvent(new CustomEvent('jbai-ws', { detail: JSON.stringify({ type, data }) })); } catch (e) {} };
@@ -69,6 +70,8 @@
           return;
         }
         onWsMessage(m.data);
+        clearTimeout(wsHudTimer);
+        wsHudTimer = setTimeout(() => { try { dataHud(); } catch (_) { /* ignore */ } }, 300);
       } catch (_) { /* never let a stray message break anything */ }
     });
   })();
@@ -112,6 +115,30 @@
     } catch (_) { /* fine - screen detection still works */ }
   }
 
+  // X-ray: every value the game sent to THIS phone that looks like a hidden number/answer/role
+  const SECRET_KEY_RE = /^(price|prices|value|values|worth|cost|bid|minbid|maxbid|highbid|money|cash|amount|correct|iscorrect|correctanswer|answer|truth|istruth|real|isreal|secret|role|isimpostor|impostor|isalien|alien|faker|isfaker|liar|isliar|points|score|winner|rank|percent|percentage|year|multiplier|bonus)$/i;
+  const LABEL_KEYS = ['text', 'name', 'title', 'label', 'choice', 'caption', 'word', 'prompt', 'artist'];
+  function xrayScan() {
+    const fields = []; const pairs = []; let nodes = 0;
+    const walk = (v, path, depth) => {
+      if (nodes++ > 1500 || depth > 7 || v === null || typeof v !== 'object') return;
+      if (!Array.isArray(v)) {
+        const keys = Object.keys(v);
+        const labelKey = LABEL_KEYS.find((k) => typeof v[k] === 'string' && v[k].trim().length >= 2 && v[k].length <= 120);
+        for (const k of keys) {
+          const val = v[k]; const kk = k.replace(/[^a-z]/gi, '');
+          if (SECRET_KEY_RE.test(kk) && (typeof val === 'number' || typeof val === 'boolean' || (typeof val === 'string' && val.length <= 80))) {
+            fields.push({ path: path + '.' + k, key: k, value: val });
+            if (labelKey && k !== labelKey) pairs.push({ label: v[labelKey], key: k, value: val });
+          }
+        }
+        for (const k of keys) walk(v[k], path + '.' + k, depth + 1);
+      } else v.slice(0, 60).forEach((x, i) => walk(x, path + '[' + i + ']', depth + 1));
+    };
+    for (const [k, e] of entities.entries()) walk(e.val, k, 0);
+    return { fields: fields.slice(0, 80), pairs: pairs.slice(0, 60) };
+  }
+
   function gameData() {
     if (!settings.readConnection || !entities.size) return '';
     const recent = [...entities.entries()].sort((a, b) => b[1].t - a[1].t).slice(0, 6);
@@ -147,6 +174,7 @@
     memory: true,
     drawSpeed: 'fast',
     webSearch: true, // live search for trivia / truths (Gemini + Claude)
+    hud: true, // pin answers/values right on top of the game screen
     readConnection: true, // use the data Jackbox sends to this phone
     race: false, // ask the top 2 AIs at once, show whichever answers first
     taste: { likes: [], dislikes: [] }, // learned from 👍/👎
@@ -634,6 +662,7 @@ COMEDY: silently brainstorm 15+ ideas, throw away the first 5 (everyone else wri
 
 Respond with ONLY a JSON object (no markdown, no comments):
 {"game":"<game - phase>","advice":"<one short sentence, or empty>","submit":<submit button index or null>,"suspects":[{"name":"<player>","prob":<0-100>,"why":"<evidence>"}] (ONLY in social-deduction games; probabilities across players should sum to ~100; otherwise omit),
+ "badges":[{"el":<element index>,"text":"<max 24 chars>"}] (short labels pinned ON the game screen over that element: "💰 worth ~$2,400" on items to bid on, "✅ correct" on the right trivia choice, "🎯 87% real" on each Fibbage/Drawful choice, "JO 70%" on player buttons, "set to 42" on a slider, "max bid $1,800" on a bid box - add them whenever per-element info helps the player decide at a glance),
  "options":[{"label":"<2-5 word title>","text":"<the answer as the player should see it>","score":<1-10 predicted crowd reaction or confidence>,"why":"<short reason, only if asked>","actions":[...]}]}
  Optional top-level "room": one short line updating your read of what this crowd finds funny (e.g. "loves absurd + roasting Mike, groans at gross-out"); include it whenever you learn something new.
 Lobby/waiting screen: "options":[] and a short advice.`;
@@ -653,6 +682,8 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     if (ctx.images.length) L.push(`\n(${ctx.images.length} image(s) of the screen attached.)`);
     if (ctx.game) L.push(`\nDETECTED GAME: ${ctx.game.name}${ctx.game.via === 'connection' ? ' (certain - from the room data)' : ''}\nPLAYBOOK: ${ctx.game.guide}`);
     else L.push(`\nGAME: ${appTag ? 'room app tag "' + appTag + '" - ' : ''}not in my list - infer it from the screen (any Jackbox Party Pack 1-11 game or standalone).`);
+    const xr = settings.readConnection ? xrayScan() : { fields: [] };
+    if (xr.fields.length) L.push('\nX-RAY (values the game sent to this phone, possibly not shown on screen - use them, e.g. prices/worth for bidding, correct flags for trivia):\n' + xr.fields.slice(0, 30).map((f) => `  ${clean(f.path, 90)} = ${JSON.stringify(f.value)}`).join('\n'));
     const gd = gameData();
     if (gd) L.push('\nGAME DATA (from this phone\'s connection):\n' + gd);
     const obs = loadObs();
@@ -972,6 +1003,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
       submit: ok(obj.submit) ? +obj.submit : ctx.submitGuess,
       suspects,
       room: clean(obj.room, 200),
+      badges: (Array.isArray(obj.badges) ? obj.badges : []).filter((b) => b && ok(b.el) && b.text).map((b) => ({ el: +b.el, text: clean(b.text, 28) })).slice(0, 16),
       options,
     };
   }
@@ -1396,14 +1428,33 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
       ul { margin: 6px 0; padding-left: 20px; }
       li { margin: 3px 0; }
       .hist { background: #20202c; border-radius: 10px; padding: 8px 10px; margin: 6px 0; font-size: 14px; }
+      .hud { position: fixed; inset: 0; pointer-events: none; z-index: 2147483645; }
+      .hb { position: fixed; transform: translate(-50%, -100%); background: rgba(24,18,44,.94); color: #fff; border: 1px solid #7b5cff;
+            font-size: 12px; font-weight: 800; padding: 3px 9px; border-radius: 999px; white-space: nowrap; box-shadow: 0 3px 10px rgba(0,0,0,.45);
+            animation: pop .22s ease-out; max-width: 70vw; overflow: hidden; text-overflow: ellipsis; }
+      .hb.below { transform: translate(-50%, 0); }
+      .hb.best { background: linear-gradient(135deg,#2ee66b,#13b34f); color: #042; border-color: #2ee66b; }
+      .hb.data { background: linear-gradient(135deg,#21c7ff,#2a6dff); color: #fff; border-color: #6fd8ff; }
+      .ring { position: fixed; border: 3px solid #2ee66b; border-radius: 12px; box-shadow: 0 0 14px rgba(46,230,107,.75); animation: glow 1.4s ease-in-out infinite; }
+      @keyframes pop { from { opacity: 0; transform: translate(-50%, -80%) scale(.7); } }
+      @keyframes glow { 50% { box-shadow: 0 0 3px rgba(46,230,107,.3); } }
+      .hudpill { position: fixed; z-index: 2147483646; bottom: 24px; left: 10px; max-width: calc(100vw - 96px); background: rgba(20,16,36,.95);
+                 color: #fff; border: 1px solid #7b5cff; border-radius: 999px; padding: 7px 14px; font-size: 13px; font-weight: 700; white-space: nowrap;
+                 overflow: hidden; text-overflow: ellipsis; box-shadow: 0 6px 20px rgba(0,0,0,.5); animation: pop .22s ease-out; }
+      .card.best { animation: bestglow 2.2s ease-in-out infinite; }
+      @keyframes bestglow { 50% { box-shadow: 0 0 0 1px #7b5cff inset, 0 0 16px rgba(123,92,255,.55); } }
+      .xr { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; background: #0c0c12; border-radius: 10px; padding: 8px; max-height: 40vh; overflow: auto; }
       .toast { position: fixed; z-index: 2147483647; left: 50%; bottom: 150px; transform: translateX(-50%); background: rgba(0,0,0,.88); color: #fff;
                padding: 9px 15px; border-radius: 999px; font-size: 14px; display: none; max-width: 90vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     </style>
     <button class="fab" title="Jackbox AI Helper">✨<span class="dot"></span><span class="badge"></span></button>
     <div class="toast"></div>
+    <div class="hud"></div>
+    <button class="hudpill" style="display:none"></button>
     <div class="panel">
       <div class="row">
         <span class="title">✨ <span class="gname">Jackbox AI</span></span>
+        <button class="btn" data-act="xray" title="X-ray: what the game sent your phone">🔬</button>
         <button class="btn" data-act="guide" title="Game guide">📖</button>
         <button class="btn" data-act="history" title="History">🕘</button>
         <button class="btn" data-act="settings" title="Settings">⚙️</button>
@@ -1437,6 +1488,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
       </div>
       <div class="view guide" style="display:none"></div>
       <div class="view history" style="display:none"></div>
+      <div class="view xray" style="display:none"></div>
       <div class="view settings" style="display:none">
         <div class="section" style="border:0;margin-top:0;padding-top:0">🧠 AI (free options available)</div>
         <div class="muted">Works with <b>no setup</b> using free Pollinations AI. For smarter, faster answers add a <b>free</b> key (Gemini is the best free one). Add several and it auto-switches when one is busy.</div>
@@ -1505,6 +1557,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
         <label class="ck"><input type="checkbox" data-k="memory"> Remember earlier rounds for callbacks</label>
         <label class="ck"><input type="checkbox" data-k="webSearch"> 🔎 Web search for trivia &amp; truths (Gemini / Claude)</label>
         <label class="ck"><input type="checkbox" data-k="readConnection"> 📡 Use game data from my phone's connection</label>
+        <label class="ck"><input type="checkbox" data-k="hud"> 🎯 Show answers ON the game screen (overlay)</label>
         <div class="row" style="margin-top:14px">
           <button class="btn primary" data-act="save">Save</button>
           <button class="btn" data-act="forget">New game</button>
@@ -1553,6 +1606,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     if (name === 'settings') fillSettings();
     if (name === 'guide') renderGuide();
     if (name === 'history') renderHistory();
+    if (name === 'xray') renderXray();
   }
   const viewIs = (name) => $('.view.' + name).style.display !== 'none';
 
@@ -1679,6 +1733,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     fab.classList.add('busy');
     fab.classList.remove('ready');
     setOut(`<span class="muted">${ctx.kind === 'draw' ? 'Sketching… 🎨' : 'Cooking… 🍳'}</span>`);
+    clearHud(true);
     const t0 = Date.now();
     const runId = ++runSeq;
     // Race mode: the slower AI's answers get added as extra cards when they arrive
@@ -1698,6 +1753,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
       ctx.result = result;
       ctx.secs = ((Date.now() - t0) / 1000).toFixed(1);
       render(result, ctx, ctx.secs);
+      hudFromResult(result, ctx);
       if ((settings.mode === 'autopilot' || ctx.retried) && (!tweak || ctx.retried) && result.options.length) pilot = result.options[0];
       // safety: Auto never presses menu buttons and never auto-accuses in impostor games
       if (pilot && pilot.actions.some((a) => a.do === 'click' && ctx.items[a.el] && MENU_RE.test(ctx.items[a.el].desc))) pilot = null;
@@ -1743,6 +1799,110 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     const top = list.slice().sort((a, b) => b.prob - a.prob);
     const rows = top.map((sp, i) => `<div class="susrow"><span class="susname">${i === 0 ? '🎯 ' : ''}${esc(sp.name)}</span><span class="susbar"><span style="width:${sp.prob}%"></span></span><span class="suspct">${sp.prob}%</span></div>${sp.why ? `<div class="suswhy">${esc(sp.why)}</div>` : ''}`).join('');
     return `<div class="meter"><div class="muted" style="margin-bottom:6px">🕵️ Suspect-o-meter <span style="float:right">builds up each round</span></div>${rows}</div>`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // HUD: labels pinned on top of the real game screen (never blocks your taps)
+  // ---------------------------------------------------------------------------
+  let hudItems = []; // { el, text, cls, ring, node, ringNode }
+  let hudPill = '';
+  let hudScreen = '';
+  const dropHudNode = (h) => { if (h.node) h.node.remove(); if (h.ringNode) h.ringNode.remove(); };
+  function renderHud() {
+    const box = $('.hud'); const pillEl = $('.hudpill');
+    if (!box) return;
+    const show = !!settings.hud;
+    hudItems = hudItems.filter((h) => { if (show && h.el.isConnected) return true; dropHudNode(h); return false; });
+    const stack = new Map();
+    for (const h of hudItems) {
+      if (!h.node) {
+        h.node = document.createElement('div'); h.node.className = 'hb ' + (h.cls || ''); h.node.textContent = h.text; box.appendChild(h.node);
+        if (h.ring) { h.ringNode = document.createElement('div'); h.ringNode.className = 'ring'; box.appendChild(h.ringNode); }
+      }
+      const r = h.el.getBoundingClientRect();
+      const vis = r.width >= 2 && r.height >= 2 && r.bottom > 0 && r.top < innerHeight;
+      h.node.style.display = vis ? '' : 'none';
+      if (h.ringNode) h.ringNode.style.display = vis ? '' : 'none';
+      if (!vis) continue;
+      const n = stack.get(h.el) || 0; stack.set(h.el, n + 1);
+      const w = h.node.offsetWidth || 80;
+      const x = Math.min(innerWidth - w / 2 - 4, Math.max(w / 2 + 4, r.left + r.width / 2));
+      let y = r.top - 4 - n * 22; const below = y < 26;
+      if (below) y = r.bottom + 4 + n * 22;
+      h.node.classList.toggle('below', below);
+      h.node.style.left = x + 'px'; h.node.style.top = y + 'px';
+      if (h.ringNode) Object.assign(h.ringNode.style, { left: (r.left - 4) + 'px', top: (r.top - 4) + 'px', width: (r.width + 8) + 'px', height: (r.height + 8) + 'px' });
+    }
+    if (show && hudPill && !panel.classList.contains('open')) { pillEl.textContent = hudPill; pillEl.style.display = 'block'; } else pillEl.style.display = 'none';
+  }
+  function clearHud(keepData) {
+    hudItems = hudItems.filter((h) => { const keep = keepData && h.cls === 'data'; if (!keep) dropHudNode(h); return keep; });
+    hudPill = '';
+    renderHud();
+  }
+  function addHud(items, pill) {
+    for (const it of items) if (!hudItems.some((h) => h.el === it.el && h.text === it.text)) hudItems.push(it);
+    if (pill !== undefined) hudPill = pill;
+    hudScreen = screenNorm().slice(0, 100);
+    renderHud();
+  }
+  function hudFromResult(result, ctx) {
+    if (!settings.hud) return;
+    const items = []; const seen = new Set();
+    (result.badges || []).forEach((b) => { const it = ctx.items[b.el]; if (it) { items.push({ el: it.el, text: b.text }); seen.add(b.el); } });
+    const best = result.options[0];
+    if (best) {
+      best.actions.forEach((a) => {
+        const it = ctx.items[a.el]; if (!it) return;
+        if (a.do === 'click' && it.kind !== 'swatch') {
+          const had = items.find((x) => x.el === it.el);
+          if (had) { had.cls = 'best'; had.ring = true; } else if (!seen.has(a.el)) { items.push({ el: it.el, text: '✅ best pick' + (best.score ? ' · ' + best.score + '/10' : ''), cls: 'best', ring: true }); seen.add(a.el); }
+        }
+        if (a.do === 'set' && !seen.has(a.el)) { items.push({ el: it.el, text: '🎯 set to ' + a.value, cls: 'best', ring: true }); seen.add(a.el); }
+      });
+      const second = result.options[1];
+      if (second && ctx.kind === 'pick') second.actions.forEach((a) => { const it = ctx.items[a.el]; if (it && a.do === 'click' && !seen.has(a.el)) { items.push({ el: it.el, text: '2nd' + (second.score ? ' · ' + second.score + '/10' : '') }); seen.add(a.el); } });
+    }
+    const bestTxt = best ? (typedOf(best).join(' / ') || best.text || '') : '';
+    const lbl = best ? best.label || '' : '';
+    const pill = result.advice ? '💡 ' + result.advice : best ? '💡 ' + (bestTxt && lbl && bestTxt.toLowerCase() !== lbl.toLowerCase() ? lbl + ': ' + bestTxt : bestTxt || lbl || 'Best') : '';
+    addHud(items, clean(pill, 160));
+  }
+  // No-AI overlay: values found by X-ray, matched to the on-screen item they belong to
+  function dataHud() {
+    if (!settings.hud || !settings.readConnection || !entities.size) return;
+    const { pairs } = xrayScan();
+    if (!pairs.length) return;
+    const items = inventory(); const out = [];
+    for (const pr of pairs) {
+      const lab = String(pr.label).toLowerCase().trim();
+      const it = items.find((i) => i.kind === 'click' && i.desc.toLowerCase().includes(lab));
+      if (!it) continue;
+      if (typeof pr.value === 'boolean' && !pr.value) continue;
+      const txt = typeof pr.value === 'boolean' ? '🔬 ' + pr.key : '🔬 ' + pr.key + ': ' + (typeof pr.value === 'number' ? pr.value.toLocaleString() : pr.value);
+      out.push({ el: it.el, text: clean(txt, 28), cls: 'data' });
+    }
+    if (out.length) addHud(out);
+  }
+  function hudTick() {
+    try {
+      if (!hudItems.length && !hudPill) return;
+      if (hudScreen && !screenNorm().includes(hudScreen)) { clearHud(false); return; } // new screen: old labels would mislead
+      renderHud();
+    } catch (_) { /* ignore */ }
+  }
+
+  function renderXray() {
+    const v = $('.view.xray');
+    const { fields } = xrayScan();
+    const raw = [...entities.entries()].sort((a, b) => b[1].t - a[1].t).slice(0, 8).map(([k, e]) => k + ' = ' + JSON.stringify(e.val, null, 1)).join('\n\n');
+    v.innerHTML = `<div class="row"><b style="flex:1">🔬 X-ray</b><button class="btn" data-act="back">← Back</button></div>
+      <div class="muted">Everything the game sent to <b>your phone</b>. ${wsSeen ? '📡 Connected' + (roomCode ? ' · room ' + esc(roomCode) : '') + (appTag ? ' · ' + esc(appTag) : '') : '📡 No game data yet - join a game (reload jackbox.tv once after installing).'}</div>
+      <div class="section">💎 Notable values (${fields.length})</div>
+      ${fields.length ? '<div class="xr">' + fields.map((f) => esc(f.path) + ' = <b>' + esc(JSON.stringify(f.value)) + '</b>').join('\n') + '</div>' : '<div class="muted">None on this screen. Secret answers and prices usually stay on the host (TV/PC) and never reach phones - then the AI estimates instead.</div>'}
+      <div class="section">🧾 Raw game data</div>
+      <div class="xr">${raw ? esc(raw.slice(0, 12000)) : 'Nothing yet.'}</div>
+      <div class="row" style="margin-top:8px"><button class="btn" data-act="xrayrefresh">↻ Refresh</button></div>`;
   }
 
   function render(result, ctx, secs) {
@@ -1864,6 +2024,8 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     else if (a === 'settings') showView(viewIs('settings') ? 'main' : 'settings');
     else if (a === 'guide') showView('guide');
     else if (a === 'history') showView('history');
+    else if (a === 'xray') showView('xray');
+    else if (a === 'xrayrefresh') renderXray();
     else if (a === 'back') showView('main');
     else if (a === 'autoanswer') {
       const st = autoState();
@@ -1998,6 +2160,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
         const txt = screenText();
         if (txt.length > 20) addObs({ text: txt.slice(0, 700) });
         refreshGameUI(detectGame(txt)); // sig guard inside prevents redundant redraws
+        dataHud();
       } catch (_) { /* ignore */ }
     }, 1200);
     if (settings.autoMode === 'off' || busy || drawing) return;
@@ -2023,5 +2186,9 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     try { refreshGameUI(detectGame(screenText())); } catch (_) { /* ignore */ }
     if (needsWelcome()) setOut(welcomeHTML());
     setInterval(() => { if (!pendingSince) autoCheck(); }, 1500);
+    setInterval(hudTick, 400);
+    addEventListener('scroll', () => renderHud(), { passive: true, capture: true });
+    addEventListener('resize', () => renderHud());
+    $('.hudpill').addEventListener('click', () => { panel.classList.add('open'); showView('main'); renderHud(); });
   });
 })();
