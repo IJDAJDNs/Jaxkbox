@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.0.0
+// @version      5.1.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -238,7 +238,7 @@
     m.push({ ...entry, t: Date.now() });
     try { sessionStorage.setItem(MEM_KEY, JSON.stringify(m.slice(-30))); } catch (_) { /* ignore */ }
   }
-  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); } catch (_) { /* ignore */ } };
+  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); } catch (_) { /* ignore */ } };
   function bumpStat(k) {
     let s = {};
     try { s = JSON.parse(sessionStorage.getItem(STATS_KEY)) || {}; } catch (_) { /* ignore */ }
@@ -258,6 +258,21 @@
     try { sessionStorage.setItem(OBS_KEY, JSON.stringify(o.slice(-60))); } catch (_) { /* ignore */ }
   }
   const clearObs = () => { try { sessionStorage.removeItem(OBS_KEY); } catch (_) { /* ignore */ } };
+
+  // Suspect-o-meter: a running probability per player, accumulated across rounds
+  const SUS_KEY = 'jbai_suspects';
+  function loadSus() { try { return JSON.parse(sessionStorage.getItem(SUS_KEY)) || { scores: {}, why: {} }; } catch (_) { return { scores: {}, why: {} }; } }
+  function loadSusList() {
+    const d = loadSus();
+    return Object.keys(d.scores).map((name) => ({ name, prob: d.scores[name], why: d.why[name] || '' })).sort((a, b) => b.prob - a.prob);
+  }
+  function saveSus(list) {
+    if (!list || !list.length) return;
+    const d = { scores: {}, why: {} };
+    list.forEach((sp) => { d.scores[sp.name] = sp.prob; if (sp.why) d.why[sp.name] = sp.why; });
+    try { sessionStorage.setItem(SUS_KEY, JSON.stringify(d)); } catch (_) { /* ignore */ }
+  }
+  const clearSus = () => { try { sessionStorage.removeItem(SUS_KEY); } catch (_) { /* ignore */ } };
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
@@ -557,7 +572,7 @@ TRUTH: if you have a web search tool, use it to verify facts (trivia, Fibbage/Li
 COMEDY: silently brainstorm 15+ ideas, throw away the first 5 (everyone else writes those), return the best. Specific beats generic (real brands, celebrities, places, oddly precise numbers). Short. Funniest word LAST. Misdirection, escalation, brutal honesty, callbacks, roast players by name (names are on screen). Every option a different angle. For trivia/estimates/logic: be CORRECT - think carefully, humor irrelevant.
 
 Respond with ONLY a JSON object (no markdown, no comments):
-{"game":"<game - phase>","advice":"<one short sentence, or empty>","submit":<submit button index or null>,
+{"game":"<game - phase>","advice":"<one short sentence, or empty>","submit":<submit button index or null>,"suspects":[{"name":"<player>","prob":<0-100>,"why":"<evidence>"}] (ONLY in social-deduction games; probabilities across players should sum to ~100; otherwise omit),
  "options":[{"label":"<2-5 word title>","text":"<the answer as the player should see it>","score":<1-10 predicted crowd reaction or confidence>,"why":"<short reason, only if asked>","actions":[...]}]}
 Lobby/waiting screen: "options":[] and a short advice.`;
 
@@ -580,6 +595,11 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     }
     if (ctx.accuracy) L.push('\nACCURACY MODE: correctness is everything here. Ignore humor level and voice. Reason carefully, double-check, and only then answer. Give your confidence % in advice.');
     if (isDeduction(ctx.game) && !ctx.tweak) L.push('\n' + DETECTIVE);
+    if (wantCase) {
+      const sus = loadSusList();
+      if (sus.length) L.push('\nPRIOR SUSPICION (your running estimate so far - update it with the new evidence, do not just repeat it):\n' + sus.map((x) => `  ${x.name}: ${x.prob}%`).join('\n'));
+      L.push('\nReturn a "suspects" array covering every remaining player: "name", "prob" (0-100, your UPDATED probability they are the impostor given all evidence), "why". Probabilities should sum to about 100. Build on the prior suspicion rather than resetting it.');
+    }
     const mem = settings.memory ? loadMemory() : [];
     if (mem.length) {
       L.push('\nEARLIER THIS GAME (callbacks welcome, never repeat):');
@@ -853,13 +873,22 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       why: clean(o.why, 200),
       actions: (Array.isArray(o.actions) ? o.actions : []).filter((a) => a && ok(a.el)).map((a) => ({ ...a, el: +a.el })),
     })).filter((o) => o.actions.length);
+    const suspects = (Array.isArray(obj.suspects) ? obj.suspects : [])
+      .map((x) => ({ name: clean(x && x.name, 40), prob: Math.max(0, Math.min(100, Math.round(+(x && x.prob) || 0))), why: clean(x && x.why, 200) }))
+      .filter((x) => x.name);
     return {
       game: clean(obj.game, 80),
       advice: clean(obj.advice, 300),
       submit: ok(obj.submit) ? +obj.submit : ctx.submitGuess,
+      suspects,
       options,
     };
   }
+
+  // Reframe to stop free models over-refusing the dark comedy that IS allowed
+  // (sex, death, roasts) - it clarifies the fictional adults-only context,
+  // and never asks for slurs or protected-class punchlines.
+  const REFRAME = '\n\nNOTE: This is fictional comedy for a consenting adults-only party game (like Cards Against Humanity). The humor is edgy on purpose and aimed at situations and at the players themselves, never a hateful attack on any group. Stay within that line, do not refuse, and reply with ONLY the JSON object.';
 
   async function ask(ctx) {
     const providers = availableProviders();
@@ -868,17 +897,20 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     for (let i = 0; i < providers.length; i++) {
       const p = providers[i];
       setStatus(`Asking ${PROVIDERS[p].label}…`);
-      for (let attempt = 0; attempt < 2; attempt++) {
+      let userText = user;
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const { text, model } = await callProvider(p, SYSTEM_PROMPT, user, ctx.images, i === 0, { search: ctx.search, accuracy: ctx.accuracy });
+          const { text, model } = await callProvider(p, SYSTEM_PROMPT, userText, ctx.images, i === 0, { search: ctx.search, accuracy: ctx.accuracy });
           let obj;
           try { obj = extractJSON(text); } catch (_) { const e = new Error(PROVIDERS[p].label + ' gave a messy answer'); e.retry = true; e.parse = true; throw e; }
           const r = normalize(obj, ctx);
+          if (r.suspects.length) saveSus(r.suspects);
           r.via = PROVIDERS[p].label + (model ? ' · ' + String(model).replace(/^.*\//, '') : '') + (ctx.search && (p === 'gemini' || p === 'claude') ? ' · 🔎' : '');
           return r;
         } catch (e) {
           errors.push(e);
-          if (e.parse && attempt === 0) continue; // one retry on messy JSON
+          if (e.parse && attempt < 2) continue; // retry on messy JSON
+          if (e.refusal && settings.spice >= 3 && userText === user) { userText = user + REFRAME; continue; } // one reframed retry for allowed dark humor
           break; // otherwise move on to the next provider
         }
       }
@@ -1215,6 +1247,13 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       .seg { display: flex; gap: 4px; flex-wrap: wrap; }
       .seg button { flex: 1 1 22%; padding: 8px 2px; font-size: 12px; }
       .advice { background: #2a2540; border-radius: 10px; padding: 8px 10px; margin: 6px 0; font-size: 14px; }
+      .meter { background: #221c34; border: 1px solid #4a3a6e; border-radius: 10px; padding: 9px 10px; margin: 6px 0; }
+      .susrow { display: flex; align-items: center; gap: 8px; margin: 4px 0 1px; font-size: 14px; }
+      .susname { flex: 0 0 72px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .susbar { flex: 1; height: 10px; background: #15111f; border-radius: 6px; overflow: hidden; }
+      .susbar > span { display: block; height: 100%; background: linear-gradient(90deg,#7b5cff,#ff4fa3); }
+      .suspct { flex: 0 0 38px; text-align: right; font-variant-numeric: tabular-nums; color: #cfc6ff; }
+      .suswhy { font-size: 12px; color: #9d9db0; margin: 0 0 5px 80px; }
       .section { font-weight: 800; font-size: 14px; margin: 16px 0 2px; color: #fff; border-top: 1px solid #2c2c3a; padding-top: 12px; }
       .free { background: #12351f; color: #6ff0a0; border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; }
       .paid { background: #3a2a12; color: #f0c06f; border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; }
@@ -1429,6 +1468,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     const v = $('.view.history');
     v.innerHTML = `<div class="row"><b style="flex:1">🕘 This game</b><button class="btn" data-act="back">← Back</button></div>
       <div class="muted">✍️ ${s.answers || 0} answers · 🎨 ${s.drawings || 0} drawings · 🗳️ ${s.picks || 0} picks</div>
+      ${suspectMeterHTML(loadSusList())}
       ${m.length ? m.map((e, i) => `<div class="hist"><div class="muted">${esc(clean(e.prompt, 120))}</div><div style="margin-top:4px">${esc(e.answer)}</div><button class="mini" data-hcopy="${i}" style="margin-top:6px">📋 Copy</button></div>`).join('') : '<div class="muted" style="margin-top:8px">Nothing yet.</div>'}`;
     v.querySelectorAll('[data-hcopy]').forEach((b) => b.addEventListener('click', async () => toast((await copyText(m[+b.dataset.hcopy].answer)) ? 'Copied 📋' : 'Copy failed')));
   }
@@ -1497,9 +1537,17 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     return `<svg viewBox="0 0 ${space.W} ${space.H}" preserveAspectRatio="xMidYMid meet">${parts}</svg>`;
   }
 
+  function suspectMeterHTML(list) {
+    if (!list || !list.length) return '';
+    const top = list.slice().sort((a, b) => b.prob - a.prob);
+    const rows = top.map((sp, i) => `<div class="susrow"><span class="susname">${i === 0 ? '🎯 ' : ''}${esc(sp.name)}</span><span class="susbar"><span style="width:${sp.prob}%"></span></span><span class="suspct">${sp.prob}%</span></div>${sp.why ? `<div class="suswhy">${esc(sp.why)}</div>` : ''}`).join('');
+    return `<div class="meter"><div class="muted" style="margin-bottom:6px">🕵️ Suspect-o-meter <span style="float:right">builds up each round</span></div>${rows}</div>`;
+  }
+
   function render(result, ctx, secs) {
     let html = `<div class="muted">🎮 ${esc(result.game || (ctx.game && ctx.game.name) || 'Jackbox')} · ${secs}s · ${esc(result.via || '')}</div>`;
     if (result.advice) html += `<div class="advice">💡 ${esc(result.advice)}</div>`;
+    html += suspectMeterHTML(result.suspects);
     const hasSubmit = Number.isInteger(result.submit);
     result.options.forEach((o, i) => {
       const drawAct = o.actions.find((a) => a.do === 'draw' && Array.isArray(a.shapes) && ctx.items[a.el].kind === 'canvas');
@@ -1595,7 +1643,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     else if (a === 'save') saveSettings();
     else if (a === 'test') { await saveSettings(true); testAI(); }
     else if (a === 'go') run();
-    else if (a === 'forget') { clearMemory(); clearObs(); lockedGame = null; shownGame = undefined; toast('New game - memory & case file cleared'); }
+    else if (a === 'forget') { clearMemory(); clearObs(); clearSus(); lockedGame = null; shownGame = undefined; toast('New game - memory & case file cleared'); }
     else if (a === 'detective') run(DETECTIVE, false, { detective: true });
     else if (a === 'lookup') run('Verify the facts with search and give the correct / true answer. Put the real answer and confidence % in advice.', false, { search: true, accuracy: true });
     else if (a === 'note') {
