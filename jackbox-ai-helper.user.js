@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      9.0.0
+// @version      10.0.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -71,7 +71,7 @@
         }
         onWsMessage(m.data);
         clearTimeout(wsHudTimer);
-        wsHudTimer = setTimeout(() => { try { dataHud(); } catch (_) { /* ignore */ } }, 300);
+        wsHudTimer = setTimeout(() => { try { dataHud(); const g = detectGame(screenText()); if (g && g.id === 'bidiots') { captureBidTips(screenText()); bidHud(); } } catch (_) { /* ignore */ } }, 300);
       } catch (_) { /* never let a stray message break anything */ }
     });
   })();
@@ -137,6 +137,141 @@
     };
     for (const [k, e] of entities.entries()) walk(e.val, k, 0);
     return { fields: fields.slice(0, 80), pairs: pairs.slice(0, 60) };
+  }
+
+  // ===========================================================================
+  // Bidiots price engine: logs every tip shown on THIS phone and prices paintings with the real rules
+  // ===========================================================================
+  const BID = { HIGH: [3000, 5000], LOW: [500, 2500], PRIOR: 2750, PRIOR_MAX: 2200, START: 3000, LOAN: 1000, INTEREST: 500 };
+  const TIP_RE = /\b(worth|valued?|valuable|appraised|sells? for|price[ds]?|expensive|cheap|worthless|priceless|masterpiece|junk|insider|psst|rumou?r|tip|heard|secret)\b/i;
+  const BIDUI_RE = /\b(current bid|high(est)? bid|your (money|cash|balance|bid)|you have|place (a )?bid|bid now|going once|going twice|sold to|\+\s?\$|time left|waiting)\b/i;
+  const BIDTIP_KEY = 'jbai_bidtips';
+  const loadBidTips = () => { try { return JSON.parse(sessionStorage.getItem(BIDTIP_KEY)) || []; } catch (_) { return []; } };
+  const normTitle = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const money = (n) => '$' + Math.round(n).toLocaleString('en-US');
+  function captureBidTips(screenTxt) {
+    const cands = String(screenTxt || '').split(/\n+/).map((x) => x.trim());
+    // strings inside the game data too (tips may arrive there)
+    const walk = (v, d) => { if (d > 6 || v == null) return; if (typeof v === 'string') { if (v.length >= 12 && v.length <= 240) cands.push(v); return; } if (typeof v === 'object') Object.values(v).slice(0, 80).forEach((x) => walk(x, d + 1)); };
+    for (const [, e] of entities.entries()) walk(e.val, 0);
+    const tips = loadBidTips(); let added = false;
+    for (const c of cands) {
+      if (c.length < 12 || c.length > 240 || !TIP_RE.test(c) || BIDUI_RE.test(c)) continue;
+      if (!/\$\s?[\d,]{3,}|valuable|worthless|priceless|expensive|cheap|masterpiece|junk|high[- ]value|low[- ]value|most|least/i.test(c)) continue;
+      if (tips.some((t) => t.text === c)) continue;
+      tips.push({ text: c, t: Date.now() }); added = true;
+    }
+    if (added) try { sessionStorage.setItem(BIDTIP_KEY, JSON.stringify(tips.slice(-40))); } catch (_) { /* ignore */ }
+  }
+  // turn tip sentences into facts: { title, exact | min | max | tier }
+  function parseBidTips() {
+    const facts = {};
+    for (const { text } of loadBidTips()) {
+      let title = null;
+      const q = text.match(/["“”‘’']([^"“”‘’']{3,80})["“”‘’']/);
+      if (q) title = q[1];
+      else { const m = text.match(/(?:painting|drawing|picture|piece|artwork|art)\s+(?:of|called|titled|named)\s+(.{3,70}?)(?:\s+(?:is|will|could|should|might|by)\b|[,.!]|$)/i); if (m) title = m[1]; }
+      if (!title) continue;
+      const key = normTitle(title); if (!key) continue;
+      const f = facts[key] || (facts[key] = { title: title.trim(), tips: [] });
+      f.tips.push(text);
+      const amts = [...text.matchAll(/\$\s?([\d,]{3,})/g)].map((m) => +m[1].replace(/,/g, '')).filter((n) => n > 0);
+      const lt = /\b(less than|under|below|at most|no more than|max(imum)?)\b/i.test(text);
+      const gt = /\b(more than|over|above|at least|no less than|min(imum)?)\b/i.test(text);
+      if (amts.length >= 2 && /\bbetween\b|\bto\b|-/i.test(text)) { f.min = Math.max(f.min || 0, Math.min(...amts)); f.max = Math.min(f.max || 1e9, Math.max(...amts)); }
+      else if (amts.length === 1 && lt) f.max = Math.min(f.max || 1e9, amts[0]);
+      else if (amts.length === 1 && gt) f.min = Math.max(f.min || 0, amts[0]);
+      else if (amts.length === 1) f.exact = amts[0];
+      if (/most valuable|worth the most|high[- ]value|priceless|masterpiece|big money|expensive/i.test(text)) f.tier = 'high';
+      if (/least valuable|worth the least|low[- ]value|worthless|cheap|junk/i.test(text)) f.tier = 'low';
+    }
+    return facts;
+  }
+  // value + max bid for one painting
+  function priceFact(f, cash) {
+    let lo, hi, ev, src;
+    if (f && f.exact) { lo = hi = ev = f.exact; src = 'your tip'; }
+    else {
+      lo = f && f.tier === 'high' ? BID.HIGH[0] : f && f.tier === 'low' ? BID.LOW[0] : BID.LOW[0];
+      hi = f && f.tier === 'high' ? BID.HIGH[1] : f && f.tier === 'low' ? BID.LOW[1] : BID.HIGH[1];
+      if (f && f.min) lo = Math.max(lo, f.min);
+      if (f && f.max) hi = Math.min(hi, f.max);
+      if (hi < lo) hi = lo;
+      ev = f && (f.tier || f.min || f.max) ? (lo + hi) / 2 : BID.PRIOR;
+      src = f && f.tier ? `tip: ${f.tier}-value` : f && (f.min || f.max) ? 'tip: range' : 'no tip, game averages';
+    }
+    // exact: anything under worth is profit; range: stay at the safe low end; unknown: below the average
+    let maxBid = f && f.exact ? f.exact - 100 : f && (f.tier || f.min || f.max) ? Math.max(lo - 100, Math.min(ev * 0.85, hi - 100)) : BID.PRIOR_MAX;
+    maxBid = Math.max(0, Math.floor(maxBid / 100) * 100);
+    let loanTip = '';
+    if (cash != null && maxBid > cash) {
+      let bestCap = cash, bestN = 0;
+      if (f && f.exact) { // a loan is only worth it if the painting still profits after $500 interest per loan
+        for (let n = 1; n <= 3; n++) {
+          const cap = Math.min(maxBid, f.exact - BID.INTEREST * n - 100, cash + BID.LOAN * n);
+          if (cap > bestCap) { bestCap = cap; bestN = n; }
+        }
+      }
+      maxBid = Math.floor(bestCap / 100) * 100;
+      if (bestN) loanTip = ` · over ${money(cash)} = ${bestN} loan${bestN > 1 ? 's' : ''} (+$500 interest), still profit`;
+    }
+    return { lo, hi, ev, src, maxBid, loanTip };
+  }
+  function readCash(txt) {
+    const m = String(txt || '').match(/(?:your (?:money|cash|balance)|you have|cash|balance|money)\D{0,12}\$\s?([\d,]+)/i) || String(txt || '').match(/\$\s?([\d,]+)\s*(?:left|available|in (?:the )?bank)/i);
+    return m ? +m[1].replace(/,/g, '') : null;
+  }
+  // which painting is up right now? (title shown on the phone or in the game data)
+  // a tip sentence mentions a title without that painting being up for auction - never match on those
+  const isTipLine = (l) => TIP_RE.test(l) && !BIDUI_RE.test(l) && /\b(worth|valu|rumou?r|psst|tip|insider|heard|secret|appraised|sells? for)/i.test(l);
+  function matchTitle(hay, facts) {
+    let best = null;
+    for (const [k, f] of Object.entries(facts)) if (hay.includes(' ' + k + ' ') && (!best || k.length > best.key.length)) best = { key: k, f };
+    return best ? best.f : null;
+  }
+  function currentPainting(txt) {
+    const facts = parseBidTips();
+    // 1) the title shown on the phone right now
+    const screenHay = ' ' + normTitle(String(txt || '').split(/\n+/).filter((l) => !isTipLine(l)).join(' ')) + ' ';
+    const onScreen = matchTitle(screenHay, facts);
+    if (onScreen) return onScreen;
+    // 2) the newest game data (skipping tip messages)
+    const newest = [...entities.values()].sort((x, y) => y.t - x.t)[0];
+    if (!newest) return null;
+    const strs = []; const walk = (v, d) => { if (d > 6 || v == null) return; if (typeof v === 'string') { if (!isTipLine(v)) strs.push(v); return; } if (typeof v === 'object') Object.values(v).slice(0, 80).forEach((x) => walk(x, d + 1)); };
+    walk(newest.val, 0);
+    return matchTitle(' ' + normTitle(strs.join(' | ')) + ' ', facts);
+  }
+  function isBidScreen(items) {
+    return items.some((i) => i.kind === 'number') || items.some((i) => i.kind === 'click' && /\bbid\b|\$\s?\d/i.test(i.desc));
+  }
+  function bidAdvice(items, txt) {
+    if (!isBidScreen(items)) return null;
+    const f = currentPainting(txt);
+    const cash = readCash(txt);
+    const pr = priceFact(f, cash);
+    const target = items.find((i) => i.kind === 'number') || items.find((i) => i.kind === 'click' && /\bbid\b/i.test(i.desc)) || items.find((i) => i.kind === 'click' && /\$\s?\d/.test(i.desc));
+    return { f, cash, pr, target };
+  }
+  function bidLedgerText(items, txt) {
+    const tips = loadBidTips();
+    const L = ['BIDIOTS LEDGER (tips this player saw on their phone - these are the TRUE prices; use them before any guess):'];
+    if (tips.length) tips.slice(-15).forEach((t) => L.push('  TIP: ' + clean(t.text, 200))); else L.push('  (no tips seen yet)');
+    const ba = bidAdvice(items, txt);
+    if (ba) L.push(`CALCULATED for the painting on screen${ba.f ? ' "' + ba.f.title + '"' : ' (not matched to a tip - identify it from the TV photo or screen and match it to the tips yourself)'}: worth ${ba.pr.lo === ba.pr.hi ? money(ba.pr.ev) : money(ba.pr.lo) + '-' + money(ba.pr.hi)} (${ba.pr.src}), max bid ${money(ba.pr.maxBid)}${ba.cash != null ? ', player cash ' + money(ba.cash) : ''}${ba.pr.loanTip}. Use these numbers unless you can identify the painting more precisely.`);
+    return L.join('\n');
+  }
+  // deterministic overlay: no AI needed when the painting matches a tip
+  function bidHud() {
+    if (!settings.hud) return;
+    const g = detectGame(screenText());
+    if (!g || g.id !== 'bidiots') return;
+    const items = inventory(); const txt = screenText();
+    const ba = bidAdvice(items, txt);
+    if (!ba || !ba.target) return;
+    const worth = ba.pr.lo === ba.pr.hi ? money(ba.pr.ev) : money(ba.pr.lo) + '–' + money(ba.pr.hi);
+    addHud([{ el: ba.target.el, text: '🛑 max bid ' + money(ba.pr.maxBid), cls: 'best', ring: true }],
+      hudPill || ('💰 ' + (ba.f ? '"' + clean(ba.f.title, 40) + '" ' : 'Unknown painting ') + 'worth ' + worth + ' (' + ba.pr.src + ') → stop at ' + money(ba.pr.maxBid) + ba.pr.loanTip));
   }
 
   function gameData() {
@@ -288,7 +423,7 @@
     m.push({ ...entry, t: Date.now() });
     try { sessionStorage.setItem(MEM_KEY, JSON.stringify(m.slice(-30))); } catch (_) { /* ignore */ }
   }
-  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); sessionStorage.removeItem('jbai_roomread'); } catch (_) { /* ignore */ } };
+  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); sessionStorage.removeItem('jbai_roomread'); sessionStorage.removeItem('jbai_bidtips'); } catch (_) { /* ignore */ } };
   function bumpStat(k) {
     let s = {};
     try { s = JSON.parse(sessionStorage.getItem(STATS_KEY)) || {}; } catch (_) { /* ignore */ }
@@ -343,7 +478,7 @@
     { id: 'fibbage', name: 'Fibbage', re: /fibbage|fourbage|enough about you|deep dive/, guide: 'Write a LIE for a fill-in-the-blank fact so other players pick it as the truth. Match the length, style and specificity of a real answer; plausible beats funny (unless it is a likes/funny round). Never type the real answer - the game rejects it. Voting: pick the most likely TRUTH (real answers are oddly specific and weird). Enough About You: lies about a player\'s personal answer - match their voice. Like the funniest lies.', tips: ['Lies should sound boring-true', 'Guess the truth: weirdest specific option', 'Avoid answers that sound like jokes'] },
     { id: 'tmp', name: 'Trivia Murder Party', re: /trivia ?murder|triviadeath|killing ?floor|killing ?room/, guide: 'Trivia: pick the correct answer. Death minigames (Killing Floor): read the rules and survive - solve math, pick the right chalice by logic, choose the real dictionary definition, memory, etc. Reason carefully; accuracy over humor. Finale: race to escape - choose ALL options that fit the category. As a ghost, keep answering.', tips: ['Accuracy > speed', 'In minigames read every rule', 'Finale: pick all that fit'] },
     { id: 'drawful', name: 'Drawful', re: /drawful/, guide: 'Draw the given prompt so players can GUESS it (you score when they find the real title). Then write lies (fake titles) for others\' drawings that sound like real Drawful prompts. Then pick the real title. Animate: two-frame animation of the prompt. Dirty Drawful: adult prompts.', tips: ['Draw the KEY visual idea big', 'Lies: plausible weird titles', 'Real titles are oddly specific'] },
-    { id: 'bidiots', name: 'Bidiots', re: /bidiots|auction|place bid/, guide: 'Draw prompts quickly (your art is auctioned). Auction: you get secret info about which paintings are worth more - bid high on ones you know are valuable, let others overpay for junk, protect your cash. Net worth wins.', tips: ['Bid on paintings your secret info says are valuable', 'Never blow all your cash early'] },
+    { id: 'bidiots', name: 'Bidiots', re: /bidiots|auction|place bid/, guide: 'RULES: every artist draws 2 paintings - one HIGH value ($3,000-$5,000) and one LOW value ($500-$2,500); nobody knows which, not even the artist. Each player privately gets ~3 tips about what some paintings are worth (different tips for each player). Everyone starts with $3,000; the ARTIST receives HALF of the sale price. Loans: $1,000 each, max 3, each costs $500 interest at the end. Final score = cash + worth of paintings owned - loans and interest. STRATEGY: buy only below worth; a tipped exact value is truth; unknown paintings average about $2,750 but are risky; if one painting by an artist is known to be high, their other one is low (and vice versa); buying your OWN painting effectively costs half (you get the commission back); push opponents to overpay on paintings you know are low. Draw exactly the prompt when drawing.', tips: ['Tips on your phone are the only true prices - the helper logs them all', 'Each artist has 1 high ($3-5k) + 1 low ($0.5-2.5k) painting', 'You start with $3,000; artist gets half the sale', 'Loan = +$1,000 now, -$1,500 at the end'] },
     { id: 'earwax', name: 'Earwax', re: /earwax/, guide: 'Pick two sound effects from your hand that best answer the judge\'s prompt. Choose the most absurd but fitting combo.', tips: ['Weird combos win', 'Think like the judge'] },
     { id: 'bombcorp', name: 'Bomb Corp', re: /bomb ?corp|bombintern|defuse/, guide: 'Cooperative bomb defusal: follow the on-screen rules / manual exactly and give the precise step-by-step solution (which wires, buttons, order). Accuracy, not humor.', tips: ['Read rules top to bottom', 'Say steps in order'] },
     { id: 'wordspud', name: 'Word Spud', re: /word ?spud/, guide: 'Continue the previous word to form a funny compound word or phrase. Short and clever.', tips: ['One or two words', 'Aim for a funny phrase'] },
@@ -415,7 +550,7 @@
     hypnotorious: [['🔍 Who is who?', DETECTIVE]],
     suspectives: [['🔍 Who is lying?', DETECTIVE]],
     quiplash: [['🏆 Safe winner', 'Give answers that win with ANY crowd - broad, punchy, sure-fire.'], ['🎲 Wildcard', 'Give one-in-a-million wildcard answers that either bomb or get a QUIPLASH.']],
-    bidiots: [['📷 Snap the TV', 'TVCAM'], ['💰 What is it worth?', 'Using any secret info on screen, estimate each painting\'s value and tell me what to bid.']],
+    bidiots: [['📷 Snap the TV', 'TVCAM'], ['💰 What is it worth?', 'Using the BIDIOTS LEDGER (my tips), the real value ranges and anything on screen or in the TV photo: name the painting up for auction, its worth, and my max bid. Put worth + max bid as badges on the bid controls.']],
     splitroom: [['⚖️ Perfect 50/50', 'Make the dilemma split the room as close to exactly 50/50 as possible.']],
     jobjob: [['🧩 Best sentence', 'Build the funniest coherent answer using ONLY my word bank words, tapped in order.']],
     teeko: [['📷 Snap the TV', 'TVCAM'], ['👕 Best shirt', 'Pick or make the shirt the room will vote for.']],
@@ -716,6 +851,7 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
       L.push(`\nCASE FILE (${wantCase ? 'full' : 'recent'}):`);
       obs.slice(wantCase ? -25 : -3).forEach((o) => L.push(o.note ? `  NOTE from player: ${o.note}` : `  SCREEN: ${clean(o.text, wantCase ? 500 : 220)}`));
     }
+    if (ctx.game && ctx.game.id === 'bidiots') L.push('\n' + bidLedgerText(ctx.items, ctx.screenText));
     if (ctx.accuracy) L.push('\nACCURACY MODE: correctness is everything here. Ignore humor level and voice. Reason carefully, double-check, and only then answer. Give your confidence % in advice.');
     if (isDeduction(ctx.game) && !ctx.tweak) L.push('\n' + DETECTIVE);
     if (wantCase) {
@@ -1495,8 +1631,8 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
       @keyframes pop { from { opacity: 0; transform: translate(-50%, -80%) scale(.7); } }
       @keyframes glow { 50% { box-shadow: 0 0 3px rgba(46,230,107,.3); } }
       .hudpill { position: fixed; z-index: 2147483646; bottom: 24px; left: 10px; max-width: calc(100vw - 96px); background: rgba(20,16,36,.95);
-                 color: #fff; border: 1px solid #7b5cff; border-radius: 999px; padding: 7px 14px; font-size: 13px; font-weight: 700; white-space: nowrap;
-                 overflow: hidden; text-overflow: ellipsis; box-shadow: 0 6px 20px rgba(0,0,0,.5); animation: pop .22s ease-out; }
+                 color: #fff; border: 1px solid #7b5cff; border-radius: 14px; padding: 7px 12px; font-size: 13px; font-weight: 700; white-space: normal; text-align: left;
+                 line-height: 1.35; max-height: 5.2em; overflow: hidden; box-shadow: 0 6px 20px rgba(0,0,0,.5); animation: pop .22s ease-out; }
       .card.best { animation: bestglow 2.2s ease-in-out infinite; }
       @keyframes bestglow { 50% { box-shadow: 0 0 0 1px #7b5cff inset, 0 0 16px rgba(123,92,255,.55); } }
       .trace { position: fixed; opacity: .5; pointer-events: none; outline: 2px dashed #ff4fa3; outline-offset: 2px; }
@@ -2001,6 +2137,8 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
       <div class="muted">Everything the game sent to <b>your phone</b>. ${wsSeen ? '📡 Connected' + (roomCode ? ' · room ' + esc(roomCode) : '') + (appTag ? ' · ' + esc(appTag) : '') : '📡 No game data yet - join a game (reload jackbox.tv once after installing).'}</div>
       <div class="section">💎 Notable values (${fields.length})</div>
       ${fields.length ? '<div class="xr">' + fields.map((f) => esc(f.path) + ' = <b>' + esc(JSON.stringify(f.value)) + '</b>').join('\n') + '</div>' : '<div class="muted">None on this screen. Secret answers and prices usually stay on the host (TV/PC) and never reach phones - then the AI estimates instead.</div>'}
+      ${(() => { const tips = loadBidTips(); if (!tips.length) return ''; const facts = Object.values(parseBidTips());
+        return '<div class="section">💰 Bidiots tips logged (' + tips.length + ')</div>' + (facts.length ? '<div class="xr">' + facts.map((f) => { const pr = priceFact(f, null); return esc(f.title) + ' → <b>' + (pr.lo === pr.hi ? money(pr.ev) : money(pr.lo) + '–' + money(pr.hi)) + '</b> · max bid ' + money(pr.maxBid); }).join('\n') + '</div>' : '') + '<div class="xr">' + tips.map((t) => esc(t.text)).join('\n') + '</div>'; })()}
       <div class="section">🧾 Raw game data</div>
       <div class="xr">${raw ? esc(raw.slice(0, 12000)) : 'Nothing yet.'}</div>
       <div class="row" style="margin-top:8px"><button class="btn" data-act="xrayrefresh">↻ Refresh</button></div>`;
@@ -2273,6 +2411,8 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
         if (txt.length > 20) addObs({ text: txt.slice(0, 700) });
         refreshGameUI(detectGame(txt)); // sig guard inside prevents redundant redraws
         dataHud();
+        const gNow = detectGame(txt);
+        if (gNow && gNow.id === 'bidiots') { captureBidTips(txt); bidHud(); }
       } catch (_) { /* ignore */ }
     }, 1200);
     if (settings.autoMode === 'off' || busy || drawing) return;

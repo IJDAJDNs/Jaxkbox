@@ -18,6 +18,27 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v10.0: accurate Bidiots prices
+
+Bidiots values are hidden from everyone. The only true prices are the **secret tips that appear on your phone**, so the helper now prices paintings from those tips plus the game's real rules, **without needing the AI**:
+
+- **Tip ledger:** every tip that shows up on your phone during the game ("X is worth $4,200", "less than $1,000", "most valuable"…) is saved for the whole game. Bid and sale lines like "Current bid" and "SOLD to…" are ignored. See them all under 🔬 X-ray.
+- **Exact prices on the bid controls:** when a painting you have a tip for comes up, it pins **🛑 max bid** on the slider/bid button and shows *worth + where to stop* at the bottom.
+- **Real game rules built in:**
+  - Every artist draws one high-value ($3,000–$5,000) and one low-value ($500–$2,500) painting.
+  - Everyone starts with $3,000, and the artist gets half the sale price.
+  - Loans are $1,000 each (max 3) with $500 interest each.
+  - With no tip, it uses the game's real ranges (safe max $2,200). It caps bids at your cash, and only suggests a loan when the painting still profits after the interest.
+- **AI + 📷 TV photo** get the full ledger and the calculated numbers, so the AI can work out which painting is on the TV and match it to your tips.
+
+Example from testing:
+| Painting | Tip you got | Worth | Max bid |
+|---|---|---|---|
+| A frog in a tuxedo | "worth $4,200" | $4,200 | $3,600 (1 loan, still profitable) |
+| Sad robot | "less than $1,000" | $500–$1,000 | $600 |
+| Mona Lisa but a frog | "most valuable" | $3,000–$5,000 | $3,000 (all your cash) |
+| A haunted toaster | none | $500–$5,000 | $2,200 |
+
 ## 🆕 v9.0: better drawing in every game + 📷 Snap the TV
 
 - **📷 Snap the TV.** In Bidiots the paintings are on the big screen, not your phone, and the same goes for the drawing to guess in Drawful, shirts in Tee K.O., battles in Champ'd Up, posts in Survive the Internet and slides in Talking Points. Tap **📷 Snap the TV** (in the chips row, and at the top for those games), take a photo of the TV, and the AI reads it. Values and picks then get pinned on your phone. Needs an AI that can see photos (free Gemini, Claude, or a vision model on OpenRouter); the no-key AI can't.
