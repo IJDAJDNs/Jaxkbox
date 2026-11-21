@@ -18,6 +18,20 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v7.0: instant answers, learns your taste, safer Auto
+
+- **⚡ button now has 3 modes:** tap to cycle **OFF → READY → AUTO**.
+  - **READY** loads answers in the background the moment a prompt appears. Tap ✨ and they're already there, nothing gets filled in for you.
+  - **AUTO** also fills them in.
+- **Auto now handles trivia and truth votes too.** It picks the right answer in Trivia Murder Party, YDKJ, Lie Swatter and other trivia, and the real answer in Fibbage/Drawful voting.
+- **Auto is safer:**
+  - It never presses menu buttons ("Same players", "Everybody's in", etc.).
+  - It never accuses someone automatically in impostor games. It shows the suggestion and you decide.
+- **👍/👎 on every answer.** It remembers what you like (even between games) and writes more like it. Reset it in ⚙️.
+- **🏁 Race mode (optional, ⚙️):** asks your top two AIs at once, shows whichever answers first, and adds the other one's answers when they arrive. It uses double the free quota, so it's off by default.
+- **↩️ Undo** puts back whatever was in the box before the last fill.
+- **First-run setup card:** a fresh install shows one-tap buttons to add a free Groq or Gemini key.
+
 ## 🆕 v6.0: answers every prompt, faster, funnier-first
 
 - **Fixed: Auto mode skipping the 2nd prompt.** In Quiplash-style rounds, the next prompt sometimes appeared while the box still held your last answer, so Auto thought it was done. It now spots that and answers every prompt. If you type your own answer, it still leaves you alone.

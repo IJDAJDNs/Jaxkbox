@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      6.0.0
+// @version      7.0.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -148,6 +148,9 @@
     drawSpeed: 'fast',
     webSearch: true, // live search for trivia / truths (Gemini + Claude)
     readConnection: true, // use the data Jackbox sends to this phone
+    race: false, // ask the top 2 AIs at once, show whichever answers first
+    taste: { likes: [], dislikes: [] }, // learned from 👍/👎
+    welcomed: false,
     fabX: null,
     fabY: null,
     modelCache: {},
@@ -241,6 +244,9 @@
     if (!PERSONAS[settings.persona]) settings.persona = 'crowd';
     if (!MODES[settings.mode]) settings.mode = 'copilot';
     if (typeof settings.modelCache !== 'object' || !settings.modelCache) settings.modelCache = {};
+    if (!settings.taste || typeof settings.taste !== 'object') settings.taste = { likes: [], dislikes: [] };
+    if (!Array.isArray(settings.taste.likes)) settings.taste.likes = [];
+    if (!Array.isArray(settings.taste.dislikes)) settings.taste.dislikes = [];
   }
   const save = (k, v) => { settings[k] = v; return store.set(k, v); };
 
@@ -680,6 +686,8 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
         wins.forEach((o) => L.push('  RESULT: ' + clean(o.text, 260)));
       }
     }
+    const tl = settings.taste.likes.slice(-8), td = settings.taste.dislikes.slice(-8);
+    if (tl.length || td.length) L.push(`\nPLAYER'S TASTE (from their 👍/👎 - match the style of what they liked, avoid the style of what they disliked; never reuse these exact answers):${tl.length ? '\n  LIKED: ' + tl.map((x) => '"' + clean(x, 90) + '"').join(', ') : ''}${td.length ? '\n  DISLIKED: ' + td.map((x) => '"' + clean(x, 90) + '"').join(', ') : ''}`);
     if (settings.customPrompt) L.push("\nPLAYER'S OWN INSTRUCTIONS (give these HIGH priority and follow them every time, as long as they stay within the one hard line above): " + settings.customPrompt);
     L.push(ctx.kind === 'draw'
       ? 'Give 2 drawing options (different ideas). If there are text boxes too, fill them in the same option.'
@@ -973,15 +981,18 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
   // and never asks for slurs or protected-class punchlines.
   const REFRAME = '\n\nNOTE: This is fictional comedy for a consenting adults-only party game (like Cards Against Humanity). The humor is edgy on purpose and aimed at situations and at the players themselves, never a hateful attack on any group. Stay within that line, do not refuse, and reply with ONLY the JSON object.';
 
+  // Promise.any fallback for older Safari
+  const firstSuccess = (ps) => (Promise.any ? Promise.any(ps) : new Promise((res, rej) => {
+    let left = ps.length; ps.forEach((p) => p.then(res, () => { if (--left === 0) rej(new Error('all failed')); }));
+  }));
+
   async function ask(ctx) {
     const providers = availableProviders();
     const user = buildUserText(ctx);
     const sys = SYSTEM_PROMPT + (ctx.kind === 'draw' || ctx.items.some((it) => it.kind === 'canvas') ? '\n\n' + DRAW_RULES : '');
     const errors = [];
     let soft = null;
-    for (let i = 0; i < providers.length; i++) {
-      const p = providers[i];
-      setStatus(`Asking ${PROVIDERS[p].label}…`);
+    const askOne = async (p, i) => {
       let userText = user;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
@@ -1000,9 +1011,25 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
           errors.push(e);
           if (e.parse && attempt < 2) continue; // retry on messy JSON
           if (e.refusal && settings.spice >= 3 && userText === user) { userText = user + REFRAME; continue; } // one reframed retry for allowed dark humor
-          break; // otherwise move on to the next provider
+          throw e; // give up on this provider
         }
       }
+      throw errors[errors.length - 1] || new Error('failed');
+    };
+    let start = 0;
+    if (settings.race && providers.length >= 2 && !ctx.search) {
+      setStatus(`Racing ${PROVIDERS[providers[0]].label} vs ${PROVIDERS[providers[1]].label}…`);
+      const runs = [askOne(providers[0], 0), askOne(providers[1], 1)];
+      runs.forEach((pr) => pr.catch(() => {}));
+      try {
+        const first = await firstSuccess(runs);
+        runs.forEach((pr) => pr.then((r) => { if (r !== first && ctx.onExtra) ctx.onExtra(r); }, () => {}));
+        return first;
+      } catch (_) { start = 2; }
+    }
+    for (let i = start; i < providers.length; i++) {
+      setStatus(`Asking ${PROVIDERS[providers[i]].label}…`);
+      try { return await askOne(providers[i], i); } catch (_) { /* next provider */ }
     }
     if (soft) { soft.via += ' · best available'; return soft; }
     const last = errors[errors.length - 1];
@@ -1230,6 +1257,13 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
 
   async function execute(opt, ctx, submit) {
     let drew = false;
+    // snapshot fields we're about to change, for ↩️ Undo
+    const snap = [];
+    opt.actions.forEach((a) => {
+      const it = ctx.items[a.el];
+      if (it && (a.do === 'type' || a.do === 'set') && (it.kind === 'text' || it.kind === 'number') && !snap.some((x) => x.it === it)) snap.push({ it, prev: it.editable ? it.el.innerText : it.el.value });
+    });
+    if (snap.length) lastUndo = snap;
     for (const a of opt.actions) {
       const it = ctx.items[a.el];
       if (!it || !it.el.isConnected) { const e = new Error('The screen changed'); e.changed = true; throw e; }
@@ -1253,7 +1287,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     }
     try {
       const now = inventory();
-      now.forEach((i) => { if (i.kind === 'text' && fieldVal(i)) typedVals.add(fieldVal(i)); });
+      now.forEach((i) => { if (i.kind === 'text' && fieldVal(i)) rememberTyped(fieldVal(i)); });
       answeredPrompt = promptKey();
     } catch (_) { /* ignore */ }
     remember({ prompt: promptSummary(ctx), answer: typedOf(opt).join(' / ') || opt.text || opt.label || (drew ? 'a drawing' : ''), game: ctx.game && ctx.game.name });
@@ -1322,7 +1356,8 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
       .gameband .gn { font-weight: 800; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .gameband .gm { font-size: 12px; color: #cfc6ff; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .autobtn { flex: 0 0 auto; background: #3a3a4c; color: #fff; border: 1px solid #555; border-radius: 999px; padding: 7px 12px; font-size: 13px; font-weight: 700; }
-      .autobtn.on { background: linear-gradient(135deg,#2ee66b,#13b34f); color: #042; border-color: #2ee66b; }
+      .autobtn.auto { background: linear-gradient(135deg,#2ee66b,#13b34f); color: #042; border-color: #2ee66b; }
+      .autobtn.ready { background: linear-gradient(135deg,#ffd24a,#f0a500); color: #3a2600; border-color: #ffd24a; }
       .card { background: #20202c; border: 1px solid #353546; border-radius: 14px; margin: 8px 0; overflow: hidden; }
       .card.best { border-color: #7b5cff; box-shadow: 0 0 0 1px #7b5cff inset; }
       .card .use { display: block; width: 100%; text-align: left; background: none; color: #fff; border: none; padding: 11px 12px 6px; font-size: 16px; line-height: 1.3; }
@@ -1386,6 +1421,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
           <button class="chip" data-tweak="Pop culture: reference memes, movies, shows, celebrities, viral moments.">📺 Pop culture</button>
           <button class="chip" data-tweak="For drawings: much more detailed and colorful, 50-80 shapes, more color fills.">🎨 Fancier art</button>
           <button class="chip" data-act="punch">✍️ Punch up mine</button>
+          <button class="chip" data-act="undo">↩️ Undo</button>
           <button class="chip" data-act="detective">🕵️ Find impostor</button>
           <button class="chip" data-act="lookup">🔎 Look it up</button>
           <button class="chip" data-act="win">🏆 Win this</button>
@@ -1436,6 +1472,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
         <label>Custom model name (optional, advanced)</label>
         <input type="text" data-k="customModel" placeholder="leave blank to auto-pick">
         <div class="row" style="margin-top:8px"><button class="btn" data-act="test">🔌 Test AI</button><span class="muted testout"></span></div>
+        <label class="ck"><input type="checkbox" data-k="race"> 🏁 Race 2 AIs at once (faster + extra answers; uses 2× free quota)</label>
 
         <div class="section">😈 Style</div>
         <label>Humor level</label>
@@ -1471,6 +1508,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
         <div class="row" style="margin-top:14px">
           <button class="btn primary" data-act="save">Save</button>
           <button class="btn" data-act="forget">New game</button>
+          <button class="btn" data-act="resettaste">Reset 👍/👎</button>
         </div>
         <div class="muted">Keys stay on this phone and only go to that AI's own server. Drag ✨ to move it. Tap ✨ while drawing to stop.</div>
       </div>
@@ -1482,6 +1520,14 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
   const out = $('.out');
   const setOut = (html) => { out.innerHTML = html; };
   let busy = false;
+  const needsWelcome = () => !settings.welcomed && !['claudeKey', 'geminiKey', 'groqKey', 'openrouterKey'].some((k) => settings[k]);
+  const welcomeHTML = () => `<div class="advice"><b>👋 Welcome!</b> It already works <b>free with no key</b> - just tap ✨ on any prompt. For smarter, faster answers add a free key (2 min):</div>
+        <div class="row"><button class="btn primary" data-act="addkey" data-key="groqKey">⚡ Free Groq key (fastest)</button></div>
+        <div class="row"><button class="btn" data-act="addkey" data-key="geminiKey">✨ Free Gemini key</button><button class="btn" data-act="addkey" data-key="openrouterKey">OpenRouter</button><button class="btn" data-act="welcomed">Later</button></div>`;
+  let runSeq = 0;
+  let lastUndo = null;
+  // never let Auto press game-menu buttons
+  const MENU_RE = /button "(same players|new players|everybody'?s in|start( game)?|play again|back to (the )?lobby|exit|leave( game)?|change name|settings|menu|vip|start over|skip( tutorial)?|ready)"/i;
   const setStatus = (msg) => { if (busy) setOut(`<span class="muted">${esc(msg)}</span>`); };
 
   let toastTimer;
@@ -1521,16 +1567,18 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
   }
   let shownGame = null;
   let shownSig = '';
-  const autoAnswerOn = () => settings.autoMode !== 'off' && settings.mode === 'autopilot';
+  // OFF: tap ✨ yourself · READY: answers pre-load on every new prompt (instant when you tap ✨) · AUTO: also fills them in
+  const autoState = () => (settings.autoMode === 'off' ? 'off' : settings.mode === 'autopilot' ? 'auto' : 'ready');
+  const AUTO_LABEL = { off: '⚡ Auto OFF', ready: '⚡ Ready', auto: '⚡ Auto ON' };
   function refreshGameUI(g) {
     const name = g ? (g._exact || g.name) : '';
     $('.gname').textContent = name || 'Jackbox AI';
-    const on = autoAnswerOn();
-    const sig = (g ? g.id + '|' + (g._exact || '') + '|' + g.via : 'none') + '|' + roomCode + '|' + on;
+    const st = autoState();
+    const sig = (g ? g.id + '|' + (g._exact || '') + '|' + g.via : 'none') + '|' + roomCode + '|' + st;
     if (sig === shownSig) return;
     shownSig = sig; shownGame = g;
     const bar = $('.gamebar');
-    const auto = `<button class="autobtn ${on ? 'on' : ''}" data-act="autoanswer">⚡ Auto ${on ? 'ON' : 'OFF'}</button>`;
+    const auto = `<button class="autobtn ${st}" data-act="autoanswer">${AUTO_LABEL[st]}</button>`;
     if (!g) {
       bar.innerHTML = `<div class="gameband"><div style="flex:1;min-width:0"><div class="gn">🔎 Detecting game…</div><div class="gm">${roomCode ? 'room ' + esc(roomCode) : 'join a game, then tap ✨'}</div></div>${auto}</div>`;
       return;
@@ -1562,6 +1610,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     await save('mode', pending.mode);
     refreshBadges();
     lastSig = '';
+    if (keysChanged) await save('welcomed', true);
     if (quietly) return keysChanged;
     showView('main');
     setOut(`<span class="muted">Saved. AI order: ${availableProviders().map((p) => PROVIDERS[p].label).join(' → ')}</span>`);
@@ -1622,6 +1671,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     if (flags.accuracy) ctx.accuracy = true;
     refreshGameUI(ctx.game);
     if (!ctx.items.length && !extra && !tweak) {
+      if (!quiet && needsWelcome()) { setOut(welcomeHTML()); return; }
       if (!quiet) setOut(`<span class="muted">Nothing to tap on this screen yet. Tap ✨ when a prompt, drawing pad or choices show up.${ctx.game ? ' Meanwhile 📖 has tips for ' + esc(ctx.game.name) + '.' : ''}</span>`);
       return;
     }
@@ -1630,13 +1680,29 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     fab.classList.remove('ready');
     setOut(`<span class="muted">${ctx.kind === 'draw' ? 'Sketching… 🎨' : 'Cooking… 🍳'}</span>`);
     const t0 = Date.now();
+    const runId = ++runSeq;
+    // Race mode: the slower AI's answers get added as extra cards when they arrive
+    ctx.onExtra = (r2) => {
+      if (runId !== runSeq || !ctx.result) return;
+      const key = (o) => (typedOf(o).join('|') || o.text || o.label).toLowerCase().trim();
+      const seen = new Set(ctx.result.options.map(key));
+      const add = r2.options.filter((o) => !seen.has(key(o)));
+      if (!add.length) return;
+      ctx.result.options = ctx.result.options.concat(add);
+      ctx.result.via += ' + ' + r2.via;
+      render(ctx.result, ctx, ctx.secs);
+    };
     let pilot = null;
     try {
       const result = await ask(ctx);
       ctx.result = result;
-      render(result, ctx, ((Date.now() - t0) / 1000).toFixed(1));
+      ctx.secs = ((Date.now() - t0) / 1000).toFixed(1);
+      render(result, ctx, ctx.secs);
       if ((settings.mode === 'autopilot' || ctx.retried) && (!tweak || ctx.retried) && result.options.length) pilot = result.options[0];
-      else if (quiet && !panel.classList.contains('open')) fab.classList.add('ready');
+      // safety: Auto never presses menu buttons and never auto-accuses in impostor games
+      if (pilot && pilot.actions.some((a) => a.do === 'click' && ctx.items[a.el] && MENU_RE.test(ctx.items[a.el].desc))) pilot = null;
+      if (pilot && isDeduction(ctx.game) && ctx.kind === 'pick' && !ctx.retried) pilot = null;
+      if (!pilot && quiet && !panel.classList.contains('open')) fab.classList.add('ready'); // answers waiting: green dot
     } catch (e) {
       setOut('<span class="err">' + esc(e.message || e) + '</span>' + (ctx.game ? `<div class="advice" style="margin-top:8px">📖 Offline tip for ${esc(ctx.game.name)}: ${esc(ctx.game.tips.join(' · '))}</div>` : ''));
       if (quiet) fab.classList.add('ready');
@@ -1705,10 +1771,13 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
           ${hasSubmit ? `<button class="mini go" data-sub="${i}">${drawAct ? 'Draw' : 'Use'} + Submit</button>` : ''}
           ${typed.length || o.text ? `<button class="mini" data-copy="${i}">📋</button>` : ''}
           <button class="mini" data-more="${i}">🔁</button>
+          <button class="mini" data-like="${i}" title="More like this">👍</button>
+          <button class="mini" data-dislike="${i}" title="Less like this">👎</button>
         </div></div>`;
     });
     if (!result.options.length && !result.advice) html += '<div class="muted">Nothing to do here. Tap ✨ on the next screen.</div>';
-    else if (result.options.length) html += '<div class="muted">Tap a card to use it (drawings draw themselves). 🔁 = more like this.</div>';
+    else if (result.options.length) html += '<div class="muted">Tap a card to use it (drawings draw themselves). 🔁 = more like this · 👍/👎 teaches it your taste.</div>';
+    if (needsWelcome()) html += '<div class="advice" style="margin-top:8px">💡 That was the free no-key AI. <button class="mini go" data-act="addkey" data-key="groqKey">Add a free key</button> for faster, smarter answers.</div>';
     setOut(html);
 
     const go = async (i, submit) => {
@@ -1730,6 +1799,19 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
       const o = result.options[+b.dataset.more];
       run(`The player loves this option: "${o.label} - ${typedOf(o).join(' / ') || o.text}". Give fresh variations in the same spirit, each one better.`);
     }));
+    const rate = (i, good) => {
+      const o = result.options[i];
+      const txt = clean(typedOf(o).join(' / ') || o.text || o.label, 120);
+      if (!txt) return;
+      const t = settings.taste;
+      t.likes = t.likes.filter((x) => x !== txt); t.dislikes = t.dislikes.filter((x) => x !== txt);
+      (good ? t.likes : t.dislikes).push(txt);
+      t.likes = t.likes.slice(-12); t.dislikes = t.dislikes.slice(-12);
+      save('taste', t);
+      toast(good ? '👍 Noted - more like this' : '👎 Noted - less like this');
+    };
+    out.querySelectorAll('[data-like]').forEach((b) => b.addEventListener('click', () => { rate(+b.dataset.like, true); b.classList.add('go'); }));
+    out.querySelectorAll('[data-dislike]').forEach((b) => b.addEventListener('click', () => { rate(+b.dataset.dislike, false); b.style.opacity = '.5'; }));
   }
 
   async function testAI() {
@@ -1784,11 +1866,27 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     else if (a === 'history') showView('history');
     else if (a === 'back') showView('main');
     else if (a === 'autoanswer') {
-      if (autoAnswerOn()) { await save('autoMode', 'off'); await save('mode', 'copilot'); toast('Auto-answer OFF - tap ✨ when you want help'); }
-      else { await save('autoMode', 'prompts'); await save('mode', 'autopilot'); toast('⚡ Auto-answer ON - it reads each prompt, asks the AI, and fills it in'); }
+      const st = autoState();
+      if (st === 'off') { await save('autoMode', 'prompts'); if (settings.mode === 'autopilot') await save('mode', 'copilot'); toast('⚡ READY - answers load in the background; tap ✨ to see them instantly'); }
+      else if (st === 'ready') { await save('mode', 'autopilot'); toast('⚡ AUTO ON - it reads each prompt, asks the AI, and fills it in'); }
+      else { await save('autoMode', 'off'); await save('mode', 'copilot'); toast('Auto OFF - tap ✨ when you want help'); }
+      lastSig = '';
       refreshBadges(); refreshGameUI(shownGame);
       return;
     }
+    else if (a === 'undo') {
+      if (!lastUndo) { toast('Nothing to undo'); return; }
+      lastUndo.forEach(({ it, prev }) => { if (!it.el.isConnected) return; if (it.editable) { it.el.textContent = prev; it.el.dispatchEvent(new InputEvent('input', { bubbles: true })); } else setNative(it.el, prev); });
+      lastUndo = null; toast('↩️ Undone');
+    }
+    else if (a === 'resettaste') { await save('taste', { likes: [], dislikes: [] }); toast('Taste reset'); }
+    else if (a === 'addkey') {
+      showView('settings');
+      const f = $(`.settings [data-k="${t.dataset.key}"]`);
+      if (f) { f.scrollIntoView({ block: 'center' }); setTimeout(() => f.focus(), 200); }
+      toast('Tap "get one" above the box, make a free key, then paste it here and Save');
+    }
+    else if (a === 'welcomed') { await save('welcomed', true); setOut('<span class="muted">Tap ✨ on any screen: writing, drawing, voting, bidding, trivia, minigames.</span>'); }
     else if (a === 'clearcustom') { $('.settings textarea[data-k="customPrompt"]').value = ''; root.querySelectorAll('[data-sp]').forEach((c) => c.classList.remove('on')); }
     else if (a === 'save') { const changed = await saveSettings(); if (changed) { toast('Checking your AI key…'); verifyFirst().then((msg) => msg && toast(msg)); } }
     else if (a === 'test') { await saveSettings(true); testAI(); }
@@ -1854,6 +1952,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
   const screenNorm = () => screenText().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
   const promptKey = () => screenNorm().slice(0, 100);
   const typedVals = new Set(); // values we typed (to spot a stale answer left over from the last prompt)
+  function rememberTyped(v) { typedVals.add(v); while (typedVals.size > 60) typedVals.delete(typedVals.values().next().value); }
   const fieldVal = (i) => String(i.editable ? i.el.innerText : i.el.value).trim();
   function screenBase(items, kind) {
     const shape = items.map((i) => i.kind + ':' + i.desc.replace(/current=("[^"]*"|\S+)/g, '').replace(/\(selected\)/g, '')).join('|');
@@ -1863,7 +1962,13 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     const items = inventory();
     const kind = screenKind(items);
     if (kind === 'none') return '';
-    if (settings.autoMode === 'prompts' && kind === 'pick') return '';
+    if (kind === 'pick') {
+      if (items.some((i) => i.kind === 'click' && MENU_RE.test(i.desc))) return ''; // lobby / menu screen: hands off
+      if (settings.autoMode === 'prompts') { // answer screens worth auto-answering: trivia + "find the truth" votes
+        const g = detectGame(screenText());
+        if (!(g && (isAccuracy(g) || ['fibbage', 'drawful', 'lieswatter'].includes(g.id)))) return '';
+      }
+    }
     const base = screenBase(items, kind);
     const filled = items.filter((i) => i.kind === 'text' && fieldVal(i));
     if (filled.length) {
@@ -1916,6 +2021,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     document.documentElement.appendChild(host);
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     try { refreshGameUI(detectGame(screenText())); } catch (_) { /* ignore */ }
+    if (needsWelcome()) setOut(welcomeHTML());
     setInterval(() => { if (!pendingSince) autoCheck(); }, 1500);
   });
 })();
