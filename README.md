@@ -18,6 +18,10 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v5.8: smarter dark humor
+
+Edgy and Unhinged now set how far the AI is **allowed** to go, not how far it **has** to go. It goes dark or filthy when the prompt sets it up and that's genuinely the funniest answer, and uses clever, absurd or brutally honest answers when those would get more votes. Each batch mixes angles (e.g. one dark, one clever, one absurd), with the funniest ranked first. When it does go dark, it still commits fully. Want it darker on a specific prompt? Tap **🔥 Darker**.
+
 ## 🆕 v5.7: big game banner, exact names, one-tap auto-answer
 
 - **⚡ Auto-answer toggle** right at the top: turn it on and it **reads each prompt, sends it to the AI, and fills in the answer by itself** — hands-free, every round. Turn it off to go back to tapping ✨.

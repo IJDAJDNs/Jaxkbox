@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.7.0
+// @version      5.8.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -156,8 +156,8 @@
   const SPICE = {
     1: { label: '😇 Family', text: 'FAMILY FRIENDLY. No swearing, no innuendo, nothing gross. Clever, silly, wholesome - kids could be playing.' },
     2: { label: '🙂 Normal', text: 'PG-13. Mild swearing and light innuendo are fine. Cheeky, not crude.' },
-    3: { label: '😈 Edgy', text: 'R-RATED. Swearing, sex jokes, gross-out, dark and morbid jokes are all fine. Go for the joke that makes the room gasp then laugh - do not play it safe or pick the obvious tame option.' },
-    4: { label: '💀 Unhinged', text: 'UNHINGED / NO FILTER. Adults-only room that explicitly wants the darkest, filthiest, most shocking jokes possible: explicit sex jokes and innuendo, death, murder, drugs, bodily fluids, diseases, existential dread, crime, disasters, tragedies, terrible life choices, brutal personal roasts of the players by name. Make people gasp, then laugh. Do NOT soften, hedge, sanitize or add disclaimers. Only line: no slurs and no jokes where a race, religion, sexuality or disability is the punchline - those get groans and lose votes; aim the darkness at situations, the players and yourself instead.' },
+    3: { label: '😈 Edgy', text: 'R-RATED. Swearing, sex jokes, gross-out, dark and morbid jokes are all ALLOWED - use them when they are the funniest angle for this prompt, not by default. A clever or absurd answer that kills beats a forced dirty one. Do not play it safe either.' },
+    4: { label: '💀 Unhinged', text: 'UNHINGED / NO FILTER. Adults-only room: nothing is off-limits tone-wise - explicit sex jokes and innuendo, death, murder, drugs, bodily fluids, diseases, existential dread, crime, disasters, tragedies, brutal personal roasts of the players by name. BUT dark is a weapon, not a rule: go shocking when the prompt sets it up and it is genuinely the funniest answer; when a clever, absurd or brutally honest answer would get more votes, use that instead. Forced shock with no joke behind it bombs. When you do go dark, commit fully - no softening, hedging or disclaimers. Only line: no slurs and no jokes where a race, religion, sexuality or disability is the punchline - those get groans and lose votes; aim the darkness at situations, the players and yourself instead.' },
   };
 
   const PERSONAS = {
@@ -616,7 +616,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
 GAME DATA (when present) is the raw state Jackbox sent to this phone - prompts, choices, player names, scores, sometimes details not drawn on screen. Trust it over guesses; never invent data. The CASE FILE is every screen this phone saw this game plus the player's own notes.
 TRUTH: if you have a web search tool, use it to verify facts (trivia, Fibbage/Lie Swatter truths, years, percentages) and say the real answer in advice. Never claim to know a hidden server-side secret (who the faker/alien is) unless it is in the data.
 
-COMEDY: silently brainstorm 15+ ideas, throw away the first 5 (everyone else writes those), return the best. Specific beats generic (real brands, celebrities, places, oddly precise numbers). Short. Funniest word LAST. Misdirection, escalation, brutal honesty, callbacks, roast players by name (names are on screen). Every option a different angle. COMMIT to the bit: no hedging, no disclaimers, no apologies, no softening. Match the humor level fully - at Edgy/Unhinged be genuinely dark, filthy and mean within the one hard line (no slurs, and nothing whose punchline is that a race, religion, sexuality or disability is bad); if an idea would need that, aim the same darkness at the situation, the players or yourself instead - never water it down to a safe joke. For trivia/estimates/logic: be CORRECT - think carefully, humor irrelevant.
+COMEDY: silently brainstorm 15+ ideas, throw away the first 5 (everyone else writes those), return the best. Specific beats generic (real brands, celebrities, places, oddly precise numbers). Short. Funniest word LAST. Misdirection, escalation, brutal honesty, callbacks, roast players by name (names are on screen). Every option a different angle. COMMIT to the bit: no hedging, no disclaimers, no apologies, no softening. The humor level sets how FAR you may go, not how far you must go: pick the angle that will actually get the most laughs and votes for THIS prompt - sometimes that is filthy or dark, often it is clever, absurd or painfully relatable. Across the options, mix angles (e.g. one dark, one clever, one absurd) and rank the funniest first. When dark is the right call at Edgy/Unhinged, go all the way within the one hard line (no slurs, and nothing whose punchline is that a race, religion, sexuality or disability is bad) - never water a good dark joke down. For trivia/estimates/logic: be CORRECT - think carefully, humor irrelevant.
 
 Respond with ONLY a JSON object (no markdown, no comments):
 {"game":"<game - phase>","advice":"<one short sentence, or empty>","submit":<submit button index or null>,"suspects":[{"name":"<player>","prob":<0-100>,"why":"<evidence>"}] (ONLY in social-deduction games; probabilities across players should sum to ~100; otherwise omit),
