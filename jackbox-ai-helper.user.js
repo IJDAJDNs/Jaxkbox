@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.3.0
+// @version      5.4.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -140,6 +140,7 @@
     spice: 3,
     persona: 'crowd',
     style: '',
+    customPrompt: '',
     mode: 'copilot', // coach | copilot | autopilot | chaos
     autoMode: 'off', // off | prompts | all
     autoSubmit: false,
@@ -632,6 +633,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     L.push('VOICE: ' + PERSONAS[settings.persona][1]);
     if (MODES[settings.mode][1]) L.push(MODES[settings.mode][1]);
     if (settings.style) L.push('THE ROOM: ' + settings.style);
+    if (settings.customPrompt) L.push("\nPLAYER'S OWN INSTRUCTIONS (give these HIGH priority and follow them every time, as long as they stay within the one hard line above): " + settings.customPrompt);
     L.push(ctx.kind === 'draw'
       ? 'Give 2 drawing options (different ideas). If there are text boxes too, fill them in the same option.'
       : ctx.kind === 'pick' ? 'Give up to 3 options, best first.'
@@ -1269,7 +1271,8 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       .row input[type=text] { flex: 1; min-width: 0; }
       label { display: block; margin: 12px 0 4px; font-size: 13px; color: #c0c0d2; }
       label.ck { display: flex; gap: 8px; align-items: center; font-size: 14px; color: #e0e0ee; }
-      .settings input[type=text], .settings input[type=password], .settings select { width: 100%; }
+      .settings input[type=text], .settings input[type=password], .settings select, .settings textarea { width: 100%; }
+      textarea { background: #0c0c12; color: #fff; border: 1px solid #3a3a4c; border-radius: 9px; padding: 9px; font-size: 16px; font-family: inherit; resize: vertical; }
       .seg { display: flex; gap: 4px; flex-wrap: wrap; }
       .seg button { flex: 1 1 22%; padding: 8px 2px; font-size: 12px; }
       .advice { background: #2a2540; border-radius: 10px; padding: 8px 10px; margin: 6px 0; font-size: 14px; }
@@ -1373,6 +1376,9 @@ Lobby/waiting screen: "options":[] and a short advice.`;
         <label>Who's in the room / inside jokes</label>
         <div class="chips">${Object.keys(ROOM_PRESETS).map((k) => `<button class="chip" data-preset="${esc(k)}">${esc(k)}</button>`).join('')}</div>
         <input type="text" data-k="style" placeholder="e.g. college roommates; Jake is always late; we love Shrek">
+        <label>✍️ Custom instructions for the AI (optional, applied every answer)</label>
+        <textarea data-k="customPrompt" rows="3" placeholder="e.g. Keep answers under 5 words. Always work in a cat reference. Be meaner. Prefer absurd over gross."></textarea>
+        <div class="muted">This is added to the prompt on every request. The strongest way to make it answer the way you want.</div>
 
         <div class="section">🎮 Play mode</div>
         <div class="seg" data-seg="mode">${Object.entries(MODES).map(([k, v]) => `<button class="btn" data-v="${k}">${esc(v[0])}</button>`).join('')}</div>

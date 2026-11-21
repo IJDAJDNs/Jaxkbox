@@ -18,6 +18,27 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v5.4: Custom Instructions — tell the AI exactly how to answer
+
+Settings now has a **✍️ Custom instructions** box. Anything you type there is added to the prompt on **every** answer — the strongest way to make it play your way. Examples:
+- `Keep every answer under 5 words.`
+- `Always work in a reference to The Office.`
+- `Be way meaner and roast people harder.`
+- `Prefer absurd/surreal over gross-out.`
+- `Our group loves puns — always try a pun first.`
+
+### Set your Gemini key (2 min, free, big upgrade)
+1. Open **aistudio.google.com/apikey** in Safari, sign in with any Google account.
+2. Tap **Create API key**, copy it (starts with `AIza`).
+3. In a game, tap **✨ → ⚙️**, paste it into **Gemini key**, tap **🔌 Test AI**, then **Save**.
+
+### How to tune it to win
+- **Humor level** 😈/💀 for bold answers; **Comedy voice** to match your group (Savage, Gen Z, Pun master…).
+- **Room box / presets** so it knows the crowd; **Custom instructions** for your exact style.
+- **🏆 Win this** on any screen for the optimal play; **🔎 Look it up** / **🕵️ Find the truth** for trivia and Fibbage.
+- Short timers? Settings → **Model: Groq** or **Haiku**, **Thinking: Fast**.
+- Advanced: the **Custom model name** box takes any model your key can reach. Power users can also edit the `SYSTEM_PROMPT` text near the top of `jackbox-ai-helper.user.js` directly.
+
 ## 🆕 v5.3: hardened — tested across every mode, no crashes
 
 - **Smarter AI fallback.** If an AI returns an empty or useless answer (not just an error), it automatically moves to the next AI that *can* answer, instead of showing nothing. Verified: a blank Gemini reply fell through to Groq and still filled the box.
