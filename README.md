@@ -18,6 +18,13 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v5.9: built for YOUR audience
+
+Funny *to this room* is now the AI's #1 goal:
+- **Reads the room first.** Before writing, it looks at your room description, the players' names, and how the game is going, then picks the humor this crowd will actually vote for. With no description it aims for jokes that land with almost any group of friends.
+- **Learns from the votes.** When a results screen shows which answers won (votes, likes, QUIPLASH), it sees that and leans into what's working and away from what flopped.
+- **Room read.** It keeps a running one-line read of your crowd (e.g. *"loves absurd animal bits, roasts of Mike land"*) that improves every round. Check it in 🕘 history. **New game** resets it.
+
 ## 🆕 v5.8: smarter dark humor
 
 Edgy and Unhinged now set how far the AI is **allowed** to go, not how far it **has** to go. It goes dark or filthy when the prompt sets it up and that's genuinely the funniest answer, and uses clever, absurd or brutally honest answers when those would get more votes. Each batch mixes angles (e.g. one dark, one clever, one absurd), with the funniest ranked first. When it does go dark, it still commits fully. Want it darker on a specific prompt? Tap **🔥 Darker**.

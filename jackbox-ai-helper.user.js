@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.8.0
+// @version      5.9.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -254,7 +254,7 @@
     m.push({ ...entry, t: Date.now() });
     try { sessionStorage.setItem(MEM_KEY, JSON.stringify(m.slice(-30))); } catch (_) { /* ignore */ }
   }
-  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); } catch (_) { /* ignore */ } };
+  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); sessionStorage.removeItem('jbai_roomread'); } catch (_) { /* ignore */ } };
   function bumpStat(k) {
     let s = {};
     try { s = JSON.parse(sessionStorage.getItem(STATS_KEY)) || {}; } catch (_) { /* ignore */ }
@@ -289,6 +289,13 @@
     try { sessionStorage.setItem(SUS_KEY, JSON.stringify(d)); } catch (_) { /* ignore */ }
   }
   const clearSus = () => { try { sessionStorage.removeItem(SUS_KEY); } catch (_) { /* ignore */ } };
+
+  // Room read: the AI's running one-line read of what THIS crowd laughs at
+  const ROOM_KEY = 'jbai_roomread';
+  const loadRoomRead = () => { try { return sessionStorage.getItem(ROOM_KEY) || ''; } catch (_) { return ''; } };
+  const saveRoomRead = (t) => { try { if (t) sessionStorage.setItem(ROOM_KEY, t); } catch (_) { /* ignore */ } };
+  // Screens that show how the room voted (results, scores, wins)
+  const RESULT_RE = /\b(votes?|voted|wins?|winner|won|quiplash!?|points?|pts|score|likes?|round over|results?)\b/i;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
@@ -616,11 +623,14 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
 GAME DATA (when present) is the raw state Jackbox sent to this phone - prompts, choices, player names, scores, sometimes details not drawn on screen. Trust it over guesses; never invent data. The CASE FILE is every screen this phone saw this game plus the player's own notes.
 TRUTH: if you have a web search tool, use it to verify facts (trivia, Fibbage/Lie Swatter truths, years, percentages) and say the real answer in advice. Never claim to know a hidden server-side secret (who the faker/alien is) unless it is in the data.
 
+AUDIENCE IS EVERYTHING: the goal is not "a funny joke", it is the answer THIS room will laugh hardest at and vote for. Before writing, read the room from: THE ROOM description, player names and how they talk, the ROOM READ SO FAR, and WHAT THIS ROOM REWARDED (results screens showing which answers got votes, likes or a QUIPLASH). Lean into the humor style that has been winning here and away from what flopped. If you know nothing about the room yet, aim for jokes that land with almost any group of friends: relatable, specific, surprising. Never write a joke only you would find funny, and never pick shock that this crowd won't enjoy.
+
 COMEDY: silently brainstorm 15+ ideas, throw away the first 5 (everyone else writes those), return the best. Specific beats generic (real brands, celebrities, places, oddly precise numbers). Short. Funniest word LAST. Misdirection, escalation, brutal honesty, callbacks, roast players by name (names are on screen). Every option a different angle. COMMIT to the bit: no hedging, no disclaimers, no apologies, no softening. The humor level sets how FAR you may go, not how far you must go: pick the angle that will actually get the most laughs and votes for THIS prompt - sometimes that is filthy or dark, often it is clever, absurd or painfully relatable. Across the options, mix angles (e.g. one dark, one clever, one absurd) and rank the funniest first. When dark is the right call at Edgy/Unhinged, go all the way within the one hard line (no slurs, and nothing whose punchline is that a race, religion, sexuality or disability is bad) - never water a good dark joke down. For trivia/estimates/logic: be CORRECT - think carefully, humor irrelevant.
 
 Respond with ONLY a JSON object (no markdown, no comments):
 {"game":"<game - phase>","advice":"<one short sentence, or empty>","submit":<submit button index or null>,"suspects":[{"name":"<player>","prob":<0-100>,"why":"<evidence>"}] (ONLY in social-deduction games; probabilities across players should sum to ~100; otherwise omit),
  "options":[{"label":"<2-5 word title>","text":"<the answer as the player should see it>","score":<1-10 predicted crowd reaction or confidence>,"why":"<short reason, only if asked>","actions":[...]}]}
+ Optional top-level "room": one short line updating your read of what this crowd finds funny (e.g. "loves absurd + roasting Mike, groans at gross-out"); include it whenever you learn something new.
 Lobby/waiting screen: "options":[] and a short advice.`;
 
   function buildUserText(ctx) {
@@ -655,7 +665,16 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     L.push('\nHUMOR LEVEL: ' + SPICE[settings.spice].text);
     L.push('VOICE: ' + PERSONAS[settings.persona][1]);
     if (MODES[settings.mode][1]) L.push(MODES[settings.mode][1]);
-    if (settings.style) L.push('THE ROOM: ' + settings.style);
+    L.push('THE ROOM: ' + (settings.style || 'not described - infer it from player names, the screen and the results so far'));
+    const rr = loadRoomRead();
+    if (rr) L.push('ROOM READ SO FAR (your earlier read of this crowd - refine it): ' + rr);
+    if (!ctx.accuracy && !isDeduction(ctx.game)) {
+      const wins = obs.filter((o) => !o.note && RESULT_RE.test(o.text || '')).slice(-6);
+      if (wins.length) {
+        L.push('WHAT THIS ROOM REWARDED (recent results screens - which answers got votes/likes/wins; copy what works, avoid what flopped):');
+        wins.forEach((o) => L.push('  RESULT: ' + clean(o.text, 260)));
+      }
+    }
     if (settings.customPrompt) L.push("\nPLAYER'S OWN INSTRUCTIONS (give these HIGH priority and follow them every time, as long as they stay within the one hard line above): " + settings.customPrompt);
     L.push(ctx.kind === 'draw'
       ? 'Give 2 drawing options (different ideas). If there are text boxes too, fill them in the same option.'
@@ -929,6 +948,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       advice: clean(obj.advice, 300),
       submit: ok(obj.submit) ? +obj.submit : ctx.submitGuess,
       suspects,
+      room: clean(obj.room, 200),
       options,
     };
   }
@@ -956,6 +976,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
           r.via = PROVIDERS[p].label + (model ? ' · ' + String(model).replace(/^.*\//, '') : '') + (ctx.search && (p === 'gemini' || p === 'claude') ? ' · 🔎' : '');
           if (!r.options.length && !r.advice && ctx.items.length) { if (!soft) soft = r; const e = new Error(PROVIDERS[p].label + ' had no usable answer'); e.retry = true; throw e; }
           if (r.suspects.length) saveSus(r.suspects);
+          if (r.room) saveRoomRead(r.room);
           return r;
         } catch (e) {
           errors.push(e);
@@ -1558,6 +1579,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     const v = $('.view.history');
     v.innerHTML = `<div class="row"><b style="flex:1">🕘 This game</b><button class="btn" data-act="back">← Back</button></div>
       <div class="muted">✍️ ${s.answers || 0} answers · 🎨 ${s.drawings || 0} drawings · 🗳️ ${s.picks || 0} picks</div>
+      ${loadRoomRead() ? `<div class="advice">👥 Room read: ${esc(loadRoomRead())}</div>` : ''}
       ${suspectMeterHTML(loadSusList())}
       ${m.length ? m.map((e, i) => `<div class="hist"><div class="muted">${esc(clean(e.prompt, 120))}</div><div style="margin-top:4px">${esc(e.answer)}</div><button class="mini" data-hcopy="${i}" style="margin-top:6px">📋 Copy</button></div>`).join('') : '<div class="muted" style="margin-top:8px">Nothing yet.</div>'}`;
     v.querySelectorAll('[data-hcopy]').forEach((b) => b.addEventListener('click', async () => toast((await copyText(m[+b.dataset.hcopy].answer)) ? 'Copied 📋' : 'Copy failed')));
