@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      8.0.0
+// @version      9.0.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -402,7 +402,7 @@
   const DETECTIVE = 'DETECTIVE: Using the CASE FILE, GAME DATA and the screen, work out who the impostor(s) are. Compare every answer to what the real prompt/task was, look for vague, hedged, off-topic or copied answers, odd timing notes, suspicious votes and defending. In advice rank the suspects with a % each and the key evidence. Options = the vote/accuse buttons for your top suspects, best first, each with "why". If the screen says YOU are the impostor/alien/faker: instead give answers and moves that blend in and frame someone else.';
   const GAME_CHIPS = {
     fibbage: [['🕵️ Find the truth', 'Voting: identify which choice is the REAL answer. Verify with search if you can. Put the real answer and your confidence % in advice; option 1 = tap the truth.', true], ['🚫 What is the real answer?', 'Tell me the REAL answer to this question in advice (so I avoid typing it) and give lies that sound more true than the truth.', true], ['🤥 Sneakier lie', 'Lies that sound boringly, specifically TRUE - same style and length as a real answer, nothing jokey.']],
-    drawful: [['🕵️ Real title?', 'Voting: which title is the real prompt for this drawing? Confidence % in advice.'], ['🤥 Better lie', 'Lies that sound like real Drawful prompts for this drawing.']],
+    drawful: [['📷 Snap the TV', 'TVCAM'], ['🕵️ Real title?', 'Voting: which title is the real prompt for this drawing? Confidence % in advice.'], ['🤥 Better lie', 'Lies that sound like real Drawful prompts for this drawing.']],
     tmp: [['🔎 Look it up', 'Verify the answer with search before answering. Put the correct answer and source in advice.', true], ['🧮 Solve carefully', 'This is a minigame/puzzle: reason step by step and double-check before answering. Explain the rule in advice.']],
     ydkj: [['🔎 Look it up', 'Decode the wordplay, verify with search, give the correct answer.', true]],
     lieswatter: [['🔎 Fact-check', 'Verify whether the statement is true with search. Answer correctly.', true]],
@@ -415,13 +415,13 @@
     hypnotorious: [['🔍 Who is who?', DETECTIVE]],
     suspectives: [['🔍 Who is lying?', DETECTIVE]],
     quiplash: [['🏆 Safe winner', 'Give answers that win with ANY crowd - broad, punchy, sure-fire.'], ['🎲 Wildcard', 'Give one-in-a-million wildcard answers that either bomb or get a QUIPLASH.']],
-    bidiots: [['💰 What is it worth?', 'Using any secret info on screen, estimate each painting\'s value and tell me what to bid.']],
+    bidiots: [['📷 Snap the TV', 'TVCAM'], ['💰 What is it worth?', 'Using any secret info on screen, estimate each painting\'s value and tell me what to bid.']],
     splitroom: [['⚖️ Perfect 50/50', 'Make the dilemma split the room as close to exactly 50/50 as possible.']],
     jobjob: [['🧩 Best sentence', 'Build the funniest coherent answer using ONLY my word bank words, tapped in order.']],
-    teeko: [['👕 Best shirt', 'Pick or make the shirt the room will vote for.']],
+    teeko: [['📷 Snap the TV', 'TVCAM'], ['👕 Best shirt', 'Pick or make the shirt the room will vote for.']],
     blather: [['🎯 Best words', 'Pick the most precise words so others guess fastest; when guessing, name the most likely famous answer.']],
     madverse: [['🎤 Rhyme + roast', 'Bars that land the rhyme on the LAST word and brutally roast the opponent by name.']],
-    survive: [['🪤 Damning caption', 'Twist the quote into the most out-of-context, reputation-destroying caption possible.']],
+    survive: [['📷 Snap the TV', 'TVCAM'], ['🪤 Damning caption', 'Twist the quote into the most out-of-context, reputation-destroying caption possible.']],
     monster: [['😏 Smooth + weird', 'Short flirty, funny messages to win the date; use my monster power well.']],
     rolemodels: [['👥 Read the room', 'Assign each role to the player the GROUP would agree on, not just what I think.']],
     pollmine: [['📊 How the room voted', 'Predict how the room actually ranked these and pick the top (or bottom) as asked.']],
@@ -434,12 +434,12 @@
     jokeboat: [['😂 Twist ending', 'Classic setup, tight punchline, surprise twist in the last two words.']],
     joke: [['😂 Twist ending', 'Classic setup, tight punchline, surprise twist in the last two words.']],
     patently: [['💡 Pitch it', 'Punny invention name, clear labelled diagram, catchy tagline.']],
-    champdup: [['🏆 Punny champ', 'A bold character that fits the category with a punny name.']],
+    champdup: [['📷 Snap the TV', 'TVCAM'], ['🏆 Punny champ', 'A bold character that fits the category with a punny name.']],
     civic: [['🖍️ One funny add', 'Add one strong funny detail that builds on what is already drawn.']],
     cookiehaus: [['🍪 Clear + funny', 'Decorate with bold, instantly readable, funny shapes.']],
     roomerang: [['🎭 In character', 'Answer in character and play the alliances to survive.']],
     junktopia: [['🗑️ Punny + wild', 'A punny item name with a wild absurd backstory.']],
-    talkingpoints: [['🎪 Max chaos', 'As assistant pick the most chaotic/funny slides; as presenter, confident improv lines.']],
+    talkingpoints: [['📷 Snap the TV', 'TVCAM'], ['🎪 Max chaos', 'As assistant pick the most chaotic/funny slides; as presenter, confident improv lines.']],
   };
   const isAccuracy = (g) => !!g && ACCURACY_GAMES.has(g.id);
   const PICTURE_GAMES = new Set(['drawful', 'teeko', 'bidiots', 'champdup', 'civic', 'patently', 'weapons', 'cookiehaus', 'nonsensory', 'junktopia', 'talkingpoints']);
@@ -574,8 +574,8 @@
     return i === -1 ? null : i;
   }
 
-  function toJpegB64(source, w, h) {
-    const s = Math.min(1, 512 / Math.max(w, h));
+  function toJpegB64(source, w, h, maxDim) {
+    const s = Math.min(1, (maxDim || 512) / Math.max(w, h));
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(w * s));
     c.height = Math.max(1, Math.round(h * s));
@@ -635,7 +635,12 @@
     const game = detectGame(text);
     const kind = screenKind(items);
     const pictureGame = kind === 'draw' || (!!game && PICTURE_GAMES.has(game.id));
-    return { screenText: text, items, submitGuess: guessSubmit(items), images: screenImages(pictureGame), tweak, game, kind, accuracy: isAccuracy(game), search: settings.webSearch && !!game && SEARCH_GAMES.has(game.id) };
+    const images = screenImages(pictureGame);
+    let tv = false;
+    if (tvShot) { // a TV photo belongs to the screen it was taken on
+      if (screenNorm().includes(tvShot.screen)) { images.unshift(tvShot.data); tv = true; } else tvShot = null;
+    }
+    return { screenText: text, items, submitGuess: guessSubmit(items), images: images.slice(0, 4), tv, tweak, game, kind, accuracy: isAccuracy(game), search: settings.webSearch && !!game && SEARCH_GAMES.has(game.id) };
   }
 
   // ===========================================================================
@@ -671,7 +676,25 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   const DRAW_RULES = `DRAWING: canvas coords x 0-1000, y 0-H (H given per canvas). Shapes in order:
   {"line":[x1,y1,x2,y2,...]} (many points for curves) | {"poly":[x1,y1,...],"fill":true} | {"circle":[cx,cy,r],"fill":true} | {"ellipse":[cx,cy,rx,ry],"fill":true} | {"rect":[x,y,w,h],"fill":true}
 Optional per shape: "color": <swatch element index> (stays selected until changed - set it whenever it changes), "brush": <brush-size element index>. "fill" scribble-fills.
-Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fills first, outlines and details on top, then the one funny detail that sells it. 15-60 shapes. Faces = eyes + expressive mouth. No written words unless the game wants labels.`;
+Craft (this is what makes it look good) - build in layers:
+  1) big FILLED main shapes in realistic colors (skin tone, sky blue, grass green, wood brown...),
+  2) secondary filled shapes (clothes, hair, props, background hint),
+  3) dark outlines traced over the main shapes,
+  4) faces/features: eyes + an expressive mouth, readable at a glance,
+  5) the ONE detail that makes the prompt obvious or sells the joke.
+BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanishes on a phone). Use 3-5 colors from the swatches (tap a swatch with "color" when it changes); if there are no swatches, use outlines + a few fills. Curves need 8+ points. 15-60 shapes, at most ~12 filled ones (fills are slow). No written words unless the game wants labels. Only use a "brush" index if you are sure that element is a brush-size button.`;
+
+  const DRAW_NOTES = {
+    bidiots: 'BIDIOTS: your painting is valued by how well it matches the prompt - draw EXACTLY the prompt, clear and recognizable, no jokes that change its meaning.',
+    drawful: 'DRAWFUL: make the prompt guessable - the key identifying element front and center, not too literal, not abstract.',
+    teeko: 'TEE K.O.: a bold, iconic, funny centered image that works with many slogans (it goes on a T-shirt).',
+    champdup: "CHAMP'D UP: a full character (head, body, pose, outfit) that embodies the category; exaggerate the trait.",
+    civic: 'CIVIC DOODLE: ADD to the existing drawing (see attached image) - do not redraw it; put your addition where it is funniest.',
+    patently: 'PATENTLY STUPID: an invention diagram - big clear device, short labels are fine.',
+    weapons: 'WEAPONS DRAWN: a weapon whose shape secretly hides one letter of your name.',
+    cookiehaus: 'COOKIE HAUS: decorate the cookie with bold, readable icing shapes.',
+    nonsensory: 'NONSENSORY: calibrate the drawing to the exact number on the scale.',
+  };
 
   function buildUserText(ctx) {
     const L = [];
@@ -679,7 +702,8 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     L.push('\nELEMENTS:');
     if (!ctx.items.length) L.push('  (none)');
     ctx.items.forEach((it, i) => L.push(`  [${i}] ${it.desc}`));
-    if (ctx.images.length) L.push(`\n(${ctx.images.length} image(s) of the screen attached.)`);
+    if (ctx.images.length) L.push(`\n(${ctx.images.length} image(s) attached.)`);
+    if (ctx.tv) L.push('The FIRST image is a PHOTO OF THE TV / BIG SCREEN taken by the player - it shows what is on the main screen (paintings to bid on, the drawing to caption or guess, shirts/champions in a battle, answers to vote on). Read it carefully and base your answer and badges on it.');
     if (ctx.game) L.push(`\nDETECTED GAME: ${ctx.game.name}${ctx.game.via === 'connection' ? ' (certain - from the room data)' : ''}\nPLAYBOOK: ${ctx.game.guide}`);
     else L.push(`\nGAME: ${appTag ? 'room app tag "' + appTag + '" - ' : ''}not in my list - infer it from the screen (any Jackbox Party Pack 1-11 game or standalone).`);
     const xr = settings.readConnection ? xrayScan() : { fields: [] };
@@ -1021,7 +1045,8 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
   async function ask(ctx) {
     const providers = availableProviders();
     const user = buildUserText(ctx);
-    const sys = SYSTEM_PROMPT + (ctx.kind === 'draw' || ctx.items.some((it) => it.kind === 'canvas') ? '\n\n' + DRAW_RULES : '');
+    const needDraw = ctx.kind === 'draw' || ctx.items.some((it) => it.kind === 'canvas');
+    const sys = SYSTEM_PROMPT + (needDraw ? '\n\n' + DRAW_RULES + (ctx.game && DRAW_NOTES[ctx.game.id] ? '\n' + DRAW_NOTES[ctx.game.id] : '') : '');
     const errors = [];
     let soft = null;
     const askOne = async (p, i) => {
@@ -1161,7 +1186,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
   }
 
   function hatch(poly) {
-    const gap = 3.5;
+    const gap = 4.5;
     let minY = Infinity, maxY = -Infinity;
     for (const [, y] of poly) { minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
     const strokes = [];
@@ -1207,7 +1232,26 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     return t && t !== host ? t : fallback;
   }
 
+  // Ramer-Douglas-Peucker: drop points that don't change the shape (fewer events, smoother lines)
+  function simplify(pts, tol) {
+    if (pts.length < 3) return pts;
+    const sq = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+    const segD = (p, a, b) => { const l = sq(a, b); if (!l) return sq(p, a); let t = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / l; t = Math.max(0, Math.min(1, t)); return sq(p, [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])]); };
+    const keep = new Uint8Array(pts.length); keep[0] = keep[pts.length - 1] = 1;
+    const stack = [[0, pts.length - 1]]; const t2 = tol * tol;
+    while (stack.length) {
+      const [a, b] = stack.pop(); let md = 0, idx = -1;
+      for (let i = a + 1; i < b; i++) { const d = segD(pts[i], pts[a], pts[b]); if (d > md) { md = d; idx = i; } }
+      if (md > t2 && idx > 0) { keep[idx] = 1; stack.push([a, idx], [idx, b]); }
+    }
+    return pts.filter((_, i) => keep[i]);
+  }
+
   function fire(method, phase, target, x, y) {
+    if (method === 'combo') { // canvas we can't verify: send every kind of input
+      for (const m of ['pointer', 'touch', 'mouse']) { if (m === 'touch' && typeof Touch !== 'function') continue; try { fire(m, phase, target, x, y); } catch (_) { /* ignore */ } }
+      return;
+    }
     const base = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, screenX: x, screenY: y, view: window };
     if (method === 'pointer') {
       const type = { down: 'pointerdown', move: 'pointermove', up: 'pointerup' }[phase];
@@ -1223,14 +1267,14 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     }
   }
 
-  async function strokeWith(method, pts, fallbackTarget) {
+  async function strokeWith(method, pts, fallbackTarget, step) {
     const natural = settings.drawSpeed === 'natural';
-    const path = densify(pts, natural ? 3 : 5);
+    const path = densify(pts, step || (natural ? 3 : 5));
     const target = targetAt(path[0][0], path[0][1], fallbackTarget);
     fire(method, 'down', target, path[0][0], path[0][1]);
     for (let k = 1; k < path.length; k++) {
       fire(method, 'move', target, path[k][0], path[k][1]);
-      if (natural ? k % 2 === 0 : k % 25 === 0) await (natural ? sleep(8) : frame());
+      if (natural ? k % 2 === 0 : k % 8 === 0) await (natural ? sleep(8) : frame()); // let the game sample the curve
     }
     const last = path[path.length - 1];
     fire(method, 'up', target, last[0], last[1]);
@@ -1257,6 +1301,14 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
       shapeToStrokes(sh, rect, space).forEach((s, k) => all.push({ s, color: k === 0 ? sh.color : undefined, brush: k === 0 ? sh.brush : undefined }));
     }
     if (!all.length) throw new Error('That drawing had no usable shapes - try 🔁');
+    // fewer, cleaner points: games can drop or reject very dense drawings
+    all.forEach((st) => { st.s = simplify(st.s, 1.2); });
+    // pick a point spacing that keeps the whole drawing under ~3500 input events
+    const estPts = (stp) => all.reduce((n, st) => { let c = 1; for (let k = 1; k < st.s.length; k++) c += Math.max(1, Math.ceil(Math.hypot(st.s[k][0] - st.s[k - 1][0], st.s[k][1] - st.s[k - 1][1]) / stp)); return n + c; }, 0);
+    let step = settings.drawSpeed === 'natural' ? 3 : 5;
+    while (estPts(step) > 3500 && step < 120) step *= 1.3; // straight segments don't need dense points
+    const startSig = pixelSig();
+    const readable = !/^x*$/.test(startSig);
     const methods = ['pointer', 'touch', 'mouse'].filter((m) => m !== 'touch' || typeof Touch === 'function');
     for (let i = 0; i < all.length; i++) {
       if (cancelDraw) return 'cancelled';
@@ -1269,17 +1321,18 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
         let found = null;
         for (const m of methods) {
           const before = pixelSig();
-          try { await strokeWith(m, st.s, canvas); } catch (_) { continue; }
-          await frame(); await frame(); await sleep(50);
+          try { await strokeWith(m, st.s, canvas, step); } catch (_) { continue; }
+          await frame(); await frame(); await sleep(150);
           if (pixelSig() !== before) { found = m; break; }
         }
-        drawMethod = found || 'pointer';
-        if (!found) toast('Can\'t confirm the canvas is taking it - watch it');
+        drawMethod = found || 'combo'; // nothing confirmed: send every input type from now on
       } else {
-        await strokeWith(drawMethod, st.s, canvas);
+        await strokeWith(drawMethod, st.s, canvas, step);
       }
       onProgress(i + 1, all.length);
     }
+    await frame(); await sleep(150);
+    if (readable && pixelSig() === startSig) { drawMethod = null; return 'unconfirmed'; } // nothing appeared on the canvas
     return 'done';
   }
 
@@ -1289,6 +1342,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
 
   async function execute(opt, ctx, submit) {
     let drew = false;
+    let unconfirmed = false;
     // snapshot fields we're about to change, for ↩️ Undo
     const snap = [];
     opt.actions.forEach((a) => {
@@ -1313,6 +1367,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
         try {
           const r = await draw(it.el, a.shapes, ctx.items, (k, n) => { fab.dataset.p = Math.round((k / n) * 100) + '%'; });
           if (r === 'cancelled') { toast('Drawing stopped'); return false; }
+          if (r === 'unconfirmed') { unconfirmed = true; showTraceGuide(it.el, a.shapes, ctx, a.el); }
         } finally { setDrawing(false); }
       }
       await sleep(30);
@@ -1324,6 +1379,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     } catch (_) { /* ignore */ }
     remember({ prompt: promptSummary(ctx), answer: typedOf(opt).join(' / ') || opt.text || opt.label || (drew ? 'a drawing' : ''), game: ctx.game && ctx.game.name });
     bumpStat(drew ? 'drawings' : ctx.kind === 'pick' ? 'picks' : 'answers');
+    if (unconfirmed) { toast('✏️ This game didn\'t take the auto-drawing - trace the guide, then Submit'); return true; }
     if (submit && Number.isInteger(ctx.result.submit)) {
       const s = ctx.items[ctx.result.submit];
       if (s && s.el.isConnected) { await sleep(250); tap(s.el); toast('Submitted ✅'); return true; }
@@ -1443,13 +1499,17 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
                  overflow: hidden; text-overflow: ellipsis; box-shadow: 0 6px 20px rgba(0,0,0,.5); animation: pop .22s ease-out; }
       .card.best { animation: bestglow 2.2s ease-in-out infinite; }
       @keyframes bestglow { 50% { box-shadow: 0 0 0 1px #7b5cff inset, 0 0 16px rgba(123,92,255,.55); } }
+      .trace { position: fixed; opacity: .5; pointer-events: none; outline: 2px dashed #ff4fa3; outline-offset: 2px; }
+      .trace svg { width: 100%; height: 100%; display: block; }
+      .traceclose { position: fixed; z-index: 2147483646; background: #ff4fa3; color: #fff; border: none; border-radius: 999px; padding: 6px 11px; font-size: 12px; font-weight: 800; box-shadow: 0 3px 10px rgba(0,0,0,.4); }
       .xr { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; background: #0c0c12; border-radius: 10px; padding: 8px; max-height: 40vh; overflow: auto; }
       .toast { position: fixed; z-index: 2147483647; left: 50%; bottom: 150px; transform: translateX(-50%); background: rgba(0,0,0,.88); color: #fff;
-               padding: 9px 15px; border-radius: 999px; font-size: 14px; display: none; max-width: 90vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+               padding: 9px 15px; border-radius: 18px; font-size: 14px; display: none; max-width: 90vw; width: max-content; text-align: center; line-height: 1.3; }
     </style>
     <button class="fab" title="Jackbox AI Helper">✨<span class="dot"></span><span class="badge"></span></button>
     <div class="toast"></div>
     <div class="hud"></div>
+    <input type="file" accept="image/*" capture="environment" class="tvcam" style="display:none">
     <button class="hudpill" style="display:none"></button>
     <div class="panel">
       <div class="row">
@@ -1463,6 +1523,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
       <div class="view main">
         <div class="gamebar"></div>
         <div class="chips">
+          <button class="chip" data-act="tvcam">📷 Snap the TV</button>
           <button class="chip" data-tweak="Way darker and more shocking. Push it further.">🔥 Darker</button>
           <button class="chip" data-tweak="Cleaner - safe for anyone in the room, still funny.">😇 Cleaner</button>
           <button class="chip" data-tweak="Way more absurd and surreal. Weird wins.">🤪 Weirder</button>
@@ -1884,7 +1945,47 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     }
     if (out.length) addHud(out);
   }
+  let traceGuide = null; // { el, node, close }
+  function showTraceGuide(canvasEl, shapes, ctx, canvasIdx) {
+    hideTraceGuide();
+    const node = document.createElement('div'); node.className = 'trace';
+    node.innerHTML = previewSVG(shapes, ctx, canvasIdx);
+    $('.hud').appendChild(node);
+    const close = document.createElement('button'); close.className = 'traceclose'; close.textContent = '✕ hide guide';
+    close.addEventListener('click', hideTraceGuide);
+    root.appendChild(close);
+    traceGuide = { el: canvasEl, node, close };
+    placeTrace();
+  }
+  function placeTrace() {
+    if (!traceGuide) return;
+    if (!traceGuide.el.isConnected) { hideTraceGuide(); return; }
+    const r = traceGuide.el.getBoundingClientRect();
+    Object.assign(traceGuide.node.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+    Object.assign(traceGuide.close.style, { left: Math.max(4, r.right - 110) + 'px', top: Math.max(4, r.top - 34) + 'px' });
+  }
+  function hideTraceGuide() { if (!traceGuide) return; traceGuide.node.remove(); traceGuide.close.remove(); traceGuide = null; }
+
+  let tvShot = null; // { data, screen }
+  function openTvCam() { const inp = $('.tvcam'); inp.value = ''; inp.click(); } // must run inside the tap
+  async function onTvPhoto() {
+    const f = $('.tvcam').files && $('.tvcam').files[0];
+    if (!f) return;
+    try {
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      const data = toJpegB64(img, img.naturalWidth, img.naturalHeight, 1024);
+      URL.revokeObjectURL(url);
+      tvShot = { data, screen: promptKey() };
+      if (!availableProviders().some((p) => p !== 'pollinations')) toast('📷 Heads up: the free no-key AI can\'t see photos - add a free Gemini key');
+      else toast('📷 Got it - reading the TV…');
+      run('A photo of the TV / big screen is attached. Use what it shows.', false);
+    } catch (_) { toast('Could not read that photo - try again'); }
+  }
+
   function hudTick() {
+    try { placeTrace(); } catch (_) { /* ignore */ }
     try {
       if (!hudItems.length && !hudPill) return;
       if (hudScreen && !screenNorm().includes(hudScreen)) { clearHud(false); return; } // new screen: old labels would mislead
@@ -1906,7 +2007,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
   }
 
   function render(result, ctx, secs) {
-    let html = `<div class="muted">🎮 ${esc(result.game || (ctx.game && ctx.game.name) || 'Jackbox')} · ${secs}s · ${esc(result.via || '')}</div>`;
+    let html = `<div class="muted">🎮 ${esc(result.game || (ctx.game && ctx.game.name) || 'Jackbox')} · ${secs}s · ${esc(result.via || '')}${ctx.tv ? ' · 📷 TV' : ''}</div>`;
     if (result.advice) html += `<div class="advice">💡 ${esc(result.advice)}</div>`;
     html += suspectMeterHTML(result.suspects);
     const hasSubmit = Number.isInteger(result.submit);
@@ -1930,6 +2031,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
           <span class="n ${over ? 'over' : ''}">${count}</span>
           ${hasSubmit ? `<button class="mini go" data-sub="${i}">${drawAct ? 'Draw' : 'Use'} + Submit</button>` : ''}
           ${typed.length || o.text ? `<button class="mini" data-copy="${i}">📋</button>` : ''}
+          ${drawAct ? `<button class="mini" data-trace="${i}" title="Show it as a guide to trace with your finger">✏️ Trace</button>` : ''}
           <button class="mini" data-more="${i}">🔁</button>
           <button class="mini" data-like="${i}" title="More like this">👍</button>
           <button class="mini" data-dislike="${i}" title="Less like this">👎</button>
@@ -1958,6 +2060,14 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     out.querySelectorAll('[data-more]').forEach((b) => b.addEventListener('click', () => {
       const o = result.options[+b.dataset.more];
       run(`The player loves this option: "${o.label} - ${typedOf(o).join(' / ') || o.text}". Give fresh variations in the same spirit, each one better.`);
+    }));
+    out.querySelectorAll('[data-trace]').forEach((b) => b.addEventListener('click', () => {
+      const o = result.options[+b.dataset.trace];
+      const d = o.actions.find((a) => a.do === 'draw' && Array.isArray(a.shapes) && ctx.items[a.el] && ctx.items[a.el].kind === 'canvas');
+      if (!d || !ctx.items[d.el].el.isConnected) { toast('Drawing pad is gone - tap ✨ again'); return; }
+      panel.classList.remove('open');
+      showTraceGuide(ctx.items[d.el].el, d.shapes, ctx, d.el);
+      toast('✏️ Trace the guide with your finger, then Submit');
     }));
     const rate = (i, good) => {
       const o = result.options[i];
@@ -2007,6 +2117,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     }
     if (t.dataset.gchip !== undefined) {
       const c = shownGame && (GAME_CHIPS[shownGame.id] || [])[+t.dataset.gchip];
+      if (c && c[1] === 'TVCAM') { openTvCam(); return; }
       if (c) run(c[1], false, { search: !!c[2], detective: c[1] === DETECTIVE, accuracy: !!c[2] || isAccuracy(shownGame) });
       return;
     }
@@ -2026,6 +2137,7 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     else if (a === 'history') showView('history');
     else if (a === 'xray') showView('xray');
     else if (a === 'xrayrefresh') renderXray();
+    else if (a === 'tvcam') openTvCam();
     else if (a === 'back') showView('main');
     else if (a === 'autoanswer') {
       const st = autoState();
@@ -2190,5 +2302,6 @@ Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fill
     addEventListener('scroll', () => renderHud(), { passive: true, capture: true });
     addEventListener('resize', () => renderHud());
     $('.hudpill').addEventListener('click', () => { panel.classList.add('open'); showView('main'); renderHud(); });
+    $('.tvcam').addEventListener('change', onTvPhoto);
   });
 })();

@@ -18,6 +18,19 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v9.0: better drawing in every game + 📷 Snap the TV
+
+- **📷 Snap the TV.** In Bidiots the paintings are on the big screen, not your phone, and the same goes for the drawing to guess in Drawful, shirts in Tee K.O., battles in Champ'd Up, posts in Survive the Internet and slides in Talking Points. Tap **📷 Snap the TV** (in the chips row, and at the top for those games), take a photo of the TV, and the AI reads it. Values and picks then get pinned on your phone. Needs an AI that can see photos (free Gemini, Claude, or a vision model on OpenRouter); the no-key AI can't.
+- **Drawing works with more games:**
+  - **Leaner strokes:** drawings are simplified to far fewer points (capped around 3,500), so games are less likely to drop or reject them. A huge test drawing went from 56,000 points to about 3,800 and drew in 8s instead of 18s.
+  - **Smoother curves:** the game gets more time to follow each stroke, so curves come out smooth instead of jagged.
+  - **Any input type:** if it can't tell which kind of touch input a game listens for, it sends all of them.
+  - **Checks itself:** after drawing, it checks the picture actually appeared.
+- **✏️ Trace mode, works in every game.** If a game doesn't take the automatic drawing, the AI's picture appears as a see-through guide right over the drawing pad, so you can trace it with your finger (it never blocks your finger). It won't auto-press Submit on a blank drawing. Every drawing card also has a **✏️ Trace** button if you'd rather draw it yourself.
+- **Better-looking drawings:**
+  - The AI now builds pictures in layers: filled shapes in realistic colors, then outlines, faces, and the one detail that sells it.
+  - Each game gets its own tips (e.g. Bidiots: draw exactly the prompt, since value depends on accuracy; Civic Doodle: add to the existing picture).
+
 ## 🆕 v8.0: answers ON the game screen + 🔬 X-ray
 
 - **🎯 On-screen overlay.** Answers now appear as labels pinned right on top of the game's own buttons, so you don't have to open the panel:
