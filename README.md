@@ -18,6 +18,11 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v5.5: one-tap style presets
+
+The Custom Instructions box now has **tap-to-add style chips** — no typing needed. Tap one or stack several:
+🤯 Pun machine · 🔪 Short & savage · 🎬 Movie buff · 📱 Chronically online · 🧠 Big brain · 🌀 Max absurd · 🥂 Roast the room · 💀 As dark as allowed · 🎯 Just win · 🍆 Filthy. Tap **Clear** to reset. You can still type your own on top.
+
 ## 🆕 v5.4: Custom Instructions — tell the AI exactly how to answer
 
 Settings now has a **✍️ Custom instructions** box. Anything you type there is added to the prompt on **every** answer — the strongest way to make it play your way. Examples:

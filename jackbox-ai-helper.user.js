@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.4.0
+// @version      5.5.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -188,6 +188,20 @@
     '🎮 Gamers': 'gamer friends, gaming and internet culture references land',
     '🍷 Adults': 'adults with drinks, anything goes, roast each other',
     '👵 Boomers': 'older relatives, classic references, gentle innuendo is hilarious to them',
+  };
+
+  // One-tap builders for the Custom Instructions box
+  const STYLE_PRESETS = {
+    '🤯 Pun machine': 'Always try a clever pun or wordplay first.',
+    '🔪 Short & savage': 'Keep answers under 6 words and make them brutal.',
+    '🎬 Movie buff': 'Work in a movie or TV reference whenever it fits.',
+    '📱 Chronically online': 'Use current memes and internet/brainrot humor.',
+    '🧠 Big brain': 'Smart, unexpected answers that reward clever people.',
+    '🌀 Max absurd': 'Prefer surreal, random, absurd answers over obvious or gross ones.',
+    '🥂 Roast the room': 'Roast the other players by name whenever you can.',
+    '💀 As dark as allowed': 'Go as dark and twisted as the current humor level permits.',
+    '🎯 Just win': 'Prioritise winning the vote over being clever or on-brand.',
+    '🍆 Filthy': 'Lean into sex jokes and innuendo (within the humor level).',
   };
 
   const store = {
@@ -1377,8 +1391,9 @@ Lobby/waiting screen: "options":[] and a short advice.`;
         <div class="chips">${Object.keys(ROOM_PRESETS).map((k) => `<button class="chip" data-preset="${esc(k)}">${esc(k)}</button>`).join('')}</div>
         <input type="text" data-k="style" placeholder="e.g. college roommates; Jake is always late; we love Shrek">
         <label>✍️ Custom instructions for the AI (optional, applied every answer)</label>
-        <textarea data-k="customPrompt" rows="3" placeholder="e.g. Keep answers under 5 words. Always work in a cat reference. Be meaner. Prefer absurd over gross."></textarea>
-        <div class="muted">This is added to the prompt on every request. The strongest way to make it answer the way you want.</div>
+        <div class="chips">${Object.keys(STYLE_PRESETS).map((k) => `<button class="chip" data-sp="${esc(k)}">${esc(k)}</button>`).join('')}</div>
+        <textarea data-k="customPrompt" rows="3" placeholder="Tap a style above, or type your own. e.g. Keep answers under 5 words. Always sneak in a cat."></textarea>
+        <div class="row" style="margin:4px 0 0"><span class="muted" style="flex:1">Added to the prompt every time. Tap presets to stack them.</span><button class="mini" data-act="clearcustom">Clear</button></div>
 
         <div class="section">🎮 Play mode</div>
         <div class="seg" data-seg="mode">${Object.entries(MODES).map(([k, v]) => `<button class="btn" data-v="${k}">${esc(v[0])}</button>`).join('')}</div>
@@ -1651,8 +1666,16 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   // Events
   // ---------------------------------------------------------------------------
   root.addEventListener('click', async (e) => {
-    const t = e.target.closest ? e.target.closest('[data-act],[data-tweak],[data-v],[data-mode],[data-preset],[data-gchip]') : null;
+    const t = e.target.closest ? e.target.closest('[data-act],[data-tweak],[data-v],[data-mode],[data-preset],[data-gchip],[data-sp]') : null;
     if (!t) return;
+    if (t.dataset.sp !== undefined) {
+      const ta = $('.settings textarea[data-k="customPrompt"]');
+      const add = STYLE_PRESETS[t.dataset.sp];
+      const cur = ta.value.trim();
+      if (add && !cur.includes(add)) ta.value = cur ? cur + ' ' + add : add;
+      t.classList.add('on');
+      return;
+    }
     if (t.dataset.gchip !== undefined) {
       const c = shownGame && (GAME_CHIPS[shownGame.id] || [])[+t.dataset.gchip];
       if (c) run(c[1], false, { search: !!c[2], detective: c[1] === DETECTIVE, accuracy: !!c[2] || isAccuracy(shownGame) });
@@ -1673,6 +1696,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     else if (a === 'guide') showView('guide');
     else if (a === 'history') showView('history');
     else if (a === 'back') showView('main');
+    else if (a === 'clearcustom') { $('.settings textarea[data-k="customPrompt"]').value = ''; root.querySelectorAll('[data-sp]').forEach((c) => c.classList.remove('on')); }
     else if (a === 'save') saveSettings();
     else if (a === 'test') { await saveSettings(true); testAI(); }
     else if (a === 'go') run();
