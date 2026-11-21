@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.2.0
+// @version      5.3.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -60,15 +60,16 @@
       mo.observe(document, { childList: true });
     }
     document.addEventListener('jbai-ws', (e) => {
-      let m;
-      try { m = JSON.parse(e.detail); } catch (_) { return; }
-      wsSeen = true;
-      if (m.type === 'open') {
-        const r = String(m.data).match(/rooms\/([A-Z]{4})\b/i);
-        if (r && r[1].toUpperCase() !== roomCode) { roomCode = r[1].toUpperCase(); appTag = null; entities.clear(); lookupRoom(); }
-        return;
-      }
-      onWsMessage(m.data);
+      try {
+        const m = JSON.parse(e.detail);
+        wsSeen = true;
+        if (m.type === 'open') {
+          const r = String(m.data).match(/rooms\/([A-Z]{4})\b/i);
+          if (r && r[1].toUpperCase() !== roomCode) { roomCode = r[1].toUpperCase(); appTag = null; entities.clear(); lookupRoom(); }
+          return;
+        }
+        onWsMessage(m.data);
+      } catch (_) { /* never let a stray message break anything */ }
     });
   })();
 
@@ -409,7 +410,9 @@
     const hay = (fingerprint() + ' ' + (text || '')).toLowerCase();
     let best = null, bestScore = 0;
     for (const g of GAMES) {
-      const m = hay.match(new RegExp(g.re.source, 'gi'));
+      if (!g._rx) g._rx = new RegExp(g.re.source, 'gi');
+      g._rx.lastIndex = 0;
+      const m = hay.match(g._rx);
       if (!m) continue;
       const score = m.length + (hay.includes(g.name.toLowerCase()) ? 5 : 0);
       if (score > bestScore) { best = g; bestScore = score; }
@@ -914,6 +917,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     const providers = availableProviders();
     const user = buildUserText(ctx);
     const errors = [];
+    let soft = null;
     for (let i = 0; i < providers.length; i++) {
       const p = providers[i];
       setStatus(`Asking ${PROVIDERS[p].label}…`);
@@ -924,8 +928,9 @@ Lobby/waiting screen: "options":[] and a short advice.`;
           let obj;
           try { obj = extractJSON(text); } catch (_) { const e = new Error(PROVIDERS[p].label + ' gave a messy answer'); e.retry = true; e.parse = true; throw e; }
           const r = normalize(obj, ctx);
-          if (r.suspects.length) saveSus(r.suspects);
           r.via = PROVIDERS[p].label + (model ? ' · ' + String(model).replace(/^.*\//, '') : '') + (ctx.search && (p === 'gemini' || p === 'claude') ? ' · 🔎' : '');
+          if (!r.options.length && !r.advice && ctx.items.length) { if (!soft) soft = r; const e = new Error(PROVIDERS[p].label + ' had no usable answer'); e.retry = true; throw e; }
+          if (r.suspects.length) saveSus(r.suspects);
           return r;
         } catch (e) {
           errors.push(e);
@@ -935,6 +940,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
         }
       }
     }
+    if (soft) { soft.via += ' · best available'; return soft; }
     const last = errors[errors.length - 1];
     if (errors.some((e) => e.refusal)) throw new Error('The AI passed on this one. Tap 😇 Cleaner or lower the humor level.');
     if (errors.some((e) => e.status === 429)) throw new Error('Free AI is rate-limited right now. Wait ~30s, or add another free key in ⚙️ so it can switch.');
@@ -1735,24 +1741,28 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   const observer = new MutationObserver(() => {
     clearTimeout(obsTimer);
     obsTimer = setTimeout(() => {
-      const txt = screenText();
-      if (txt.length > 20) addObs({ text: txt.slice(0, 700) });
-      const g = detectGame(txt);
-      if (g !== shownGame) refreshGameUI(g);
+      try {
+        const txt = screenText();
+        if (txt.length > 20) addObs({ text: txt.slice(0, 700) });
+        const g = detectGame(txt);
+        if (g !== shownGame) refreshGameUI(g);
+      } catch (_) { /* ignore */ }
     }, 1200);
     if (settings.autoMode === 'off' || busy || drawing) return;
     const now = Date.now();
     if (!pendingSince) pendingSince = now;
     clearTimeout(debounce);
     debounce = setTimeout(() => {
-      pendingSince = 0;
-      if (busy || drawing) return;
-      const sig = signature();
-      if (!sig) { lastSig = ''; return; }
-      if (sig === 'answered' || sig === lastSig) return;
-      lastSig = sig;
-      $('.extra').value = '';
-      run('', !panel.classList.contains('open'));
+      try {
+        pendingSince = 0;
+        if (busy || drawing) return;
+        const sig = signature();
+        if (!sig) { lastSig = ''; return; }
+        if (sig === 'answered' || sig === lastSig) return;
+        lastSig = sig;
+        $('.extra').value = '';
+        run('', !panel.classList.contains('open'));
+      } catch (_) { /* ignore */ }
     }, Math.max(0, Math.min(900, pendingSince + 2000 - now)));
   });
 

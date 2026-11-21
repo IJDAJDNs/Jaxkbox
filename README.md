@@ -18,6 +18,13 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v5.3: hardened — tested across every mode, no crashes
+
+- **Smarter AI fallback.** If an AI returns an empty or useless answer (not just an error), it automatically moves to the next AI that *can* answer, instead of showing nothing. Verified: a blank Gemini reply fell through to Groq and still filled the box.
+- **Crash-proof.** The connection reader, screen watcher and auto-run are each wrapped so a weird game message or odd screen can never break the helper. Tested by flooding it with garbage connection data — it kept working with zero errors.
+- **Verified on 10 games at once** spanning writing, drawing, voting, trivia, sliders, word banks, deduction and an unknown game — all rendered, zero console errors.
+- Note: the app already routes across **five external AIs** (Gemini, Groq, OpenRouter, Pollinations, Claude) and falls back automatically, and the **custom-model box** lets you point it at any model your key can reach.
+
 ## 🆕 v5.2: an edge for every game + committed (not soft) humor
 
 - **Every game mode has a one-tap edge.** On top of auto-detection, 38 games now have a tailored button, and there's a universal **🏆 Win this** that gives the single best move on any screen using that game's real scoring. Examples: Mad Verse City → *🎤 Rhyme + roast*, Survive the Internet → *🪤 Damning caption*, Guesspionage → *📊 Best estimate*, Role Models / Poll Mine / Survey Scramble → *📊 Read the room*, Bracketeering → *🏆 Bracket-proof*, plus the deduction and trivia tools from before. The only three games with no special help are Dodo Re Mi (rhythm) and Zeeple Dome (physics), which can't be solved by an assistant, and plain collaborative texting.
