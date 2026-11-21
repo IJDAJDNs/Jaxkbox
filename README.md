@@ -4,16 +4,24 @@ An AI sidekick for **jackbox.tv** in Safari. When a prompt shows up, tap ✨ and
 
 ## What it does
 
-- **Works across the Party Packs**: Quiplash (incl. Thriplash), Fibbage (lies that fool people, and **spotting the truth when voting**), Trivia Murder Party, Job Job (uses only your word bank), Tee K.O., Champ'd Up, Survive the Internet, Mad Verse City, Joke Boat, Drawful (sees your phone's drawing) and more.
-- **Humor dial**: 😇 Family · 🙂 Normal · 😈 Edgy · 💀 Unhinged (dark, crude, no-filter adult humor).
-- **One-tap remixes**: 🔥 Darker, 😇 Cleaner, 🤪 Weirder, ✂️ Shorter, 🧠 Clever, 🎯 Roast (roasts other players by name).
-- **✍️ Punch up mine**: type your own idea in the game box, tap this, and it makes your joke land harder.
-- **🔁 More like this** on any answer you like, and **📋 copy** if the game box moved.
-- **Voting help**: tells you which answer to vote for (or which Fibbage answer is the real one) and can tap it for you, with a backup pick.
-- **Game memory**: remembers earlier prompts and your answers so it can make callbacks and running jokes.
-- **Auto-suggest** (optional): answers are ready before you even tap. A green dot on ✨ means they're waiting.
-- **Room notes**: tell it about your group once ("Jake is always late, we love Shrek") and it uses that.
-- Drag the ✨ button anywhere so it doesn't cover the game.
+**It plays every kind of Jackbox screen**, not just writing prompts:
+
+| Screen | What ✨ does |
+|---|---|
+| ✍️ Writing (Quiplash, Fibbage lies, Job Job, Joke Boat, Survive the Internet…) | Answers built to win the vote. Tap one and it's typed in |
+| 🎨 **Drawing** (Drawful, Tee K.O., Bidiots, Champ'd Up, Civic Doodle, Patently Stupid…) | Designs a picture, shows you a **preview**, then **draws it on the canvas for you** stroke by stroke, picking colors from the game's palette and filling shapes in |
+| 💰 Bidding / sliders / numbers (Bidiots, Guesspionage, Timejinx…) | Sets the slider or number to a smart value and can hit Bid |
+| 🔪 Trivia & death games (Trivia Murder Party 1 & 2) | Picks the right answer and works through the minigame rules |
+| 🗳️ Voting (any game) | Picks what the room will vote for, or in Fibbage, the **real** answer |
+| 😴 Lobby / waiting | Tells you there's nothing to do (or answers what you typed in the box) |
+
+**Extras**
+- **Humor dial**: 😇 Family · 🙂 Normal · 😈 Edgy · 💀 Unhinged.
+- **Remix chips**: 🔥 Darker, 😇 Cleaner, 🤪 Weirder, ✂️ Simpler, 🧠 Clever, 🎯 Roast, 🎨 Fancier art, ✍️ Punch up mine.
+- **Use + Submit** on every card: one tap does the answer *and* presses Submit.
+- **🤖 Autopilot**: plays the best answer automatically, and can press Submit for you too. Combine with **Auto-run** to play hands-free.
+- **Game memory** for callbacks, **room notes** for inside jokes, 🔁 more-like-this, 📋 copy.
+- Drag ✨ anywhere. While drawing it turns into ⏹ with a progress %, so tap it to stop.
 
 ## Install on iPhone (about 5 minutes)
 
@@ -45,9 +53,12 @@ An AI sidekick for **jackbox.tv** in Safari. When a prompt shows up, tap ✨ and
 
 ## Playing with it
 
-1. A prompt appears → tap **✨**.
-2. A few seconds later you get answers. **Tap one** and it fills the game's box.
-3. Tap the game's **Submit**.
+1. Any screen where you have to do something → tap **✨**.
+2. Answers show up in a few seconds (drawings take a bit longer). The purple-outlined card is the AI's top pick.
+3. **Tap a card** to use it, or **Use + Submit / Draw + Submit** to also send it.
+   For drawings, watch it draw itself. Tap ⏹ to stop if you don't like it (then use the game's Undo/Clear).
+
+**Hands-free mode:** ⚙️ → Auto-run **Everything** + 🤖 **Autopilot** + **press Submit for me**. A 🤖 badge shows on the button when autopilot is on.
 
 Tips:
 - Want something different? Tap a chip (🔥 Darker, 🎯 Roast…) or type a direction in the box ("about Sarah's cat") and tap **Go**.
@@ -68,7 +79,9 @@ You pay Anthropic per tap. Roughly: **Haiku** is a fraction of a cent, **Sonnet*
 | "Rate limited / out of credit" | Add credit at console.anthropic.com → Billing. |
 | "The AI passed on this one" | Rare on very extreme prompts. Tap 😇 Cleaner or drop the humor level one notch. |
 | Answer doesn't fill the box | Use 📋 and paste it in. Jackbox may have changed their page. |
-| Too slow | Model → Sonnet 5.5 or Haiku 5.5, Speed → Fast. |
+| Too slow | Model → Sonnet 5.5 or Haiku 5.5, Thinking → Fast. |
+| Drawing doesn't appear | It tries touch, pointer and mouse input automatically. If nothing shows, that game's canvas isn't accepting it. Tell me which game. |
+| Drawing looks off / ugly | Tap 🎨 Fancier art, or set Thinking → Deep for drawing rounds (you usually have ~90 seconds). |
 
 ## Updating
 
