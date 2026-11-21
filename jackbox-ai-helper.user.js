@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.6.0
+// @version      5.7.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -415,12 +415,21 @@
     return bits.join(' ').toLowerCase();
   }
 
+  // Exact installment titles (checked against the room appTag; specific first)
+  const EXACT = [
+    [/quiplash3/, 'Quiplash 3'], [/quiplash2/, 'Quiplash 2: The Sequel'], [/quiplashxl/, 'Quiplash XL'],
+    [/fibbage4|fourbage/, 'Fibbage 4'], [/fibbage3/, 'Fibbage 3'], [/fibbage2/, 'Fibbage 2'], [/enoughaboutyou|fibbageenough/, 'Fibbage: Enough About You'],
+    [/triviadeath2/, 'Trivia Murder Party 2'],
+    [/drawfulanimate|animate/, 'Drawful: Animate'], [/drawful2/, 'Drawful 2'],
+    [/awshirt/, 'Tee K.O. 2'],
+    [/quiplash/, 'Quiplash'],
+  ];
   let lockedGame = null;
   function detectGame(text) {
     if (appTag) {
       const t = appTag.toLowerCase();
       const g = GAMES.find((x) => APPTAGS[x.id] && APPTAGS[x.id].test(t));
-      if (g) { lockedGame = g; g.via = 'connection'; return g; }
+      if (g) { const ex = EXACT.find((e) => e[0].test(t)); g._exact = ex ? ex[1] : null; lockedGame = g; g.via = 'connection'; return g; }
     }
     const hay = (fingerprint() + ' ' + (text || '')).toLowerCase();
     let best = null, bestScore = 0;
@@ -432,7 +441,7 @@
       const score = m.length + (hay.includes(g.name.toLowerCase()) ? 5 : 0);
       if (score > bestScore) { best = g; bestScore = score; }
     }
-    if (best) lockedGame = best;
+    if (best) { best._exact = null; best.via = 'screen'; lockedGame = best; }
     return best || lockedGame;
   }
 
@@ -1265,6 +1274,11 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       .chip.on { background: #7b5cff; border-color: #7b5cff; }
       .chip.game { background: #3b2a66; border-color: #7b5cff; }
       .gamebar { margin-bottom: 8px; }
+      .gameband { display: flex; align-items: center; gap: 8px; background: linear-gradient(135deg,#2a1f52,#3a1f44); border: 1px solid #7b5cff; border-radius: 12px; padding: 9px 11px; }
+      .gameband .gn { font-weight: 800; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .gameband .gm { font-size: 12px; color: #cfc6ff; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .autobtn { flex: 0 0 auto; background: #3a3a4c; color: #fff; border: 1px solid #555; border-radius: 999px; padding: 7px 12px; font-size: 13px; font-weight: 700; }
+      .autobtn.on { background: linear-gradient(135deg,#2ee66b,#13b34f); color: #042; border-color: #2ee66b; }
       .card { background: #20202c; border: 1px solid #353546; border-radius: 14px; margin: 8px 0; overflow: hidden; }
       .card.best { border-color: #7b5cff; box-shadow: 0 0 0 1px #7b5cff inset; }
       .card .use { display: block; width: 100%; text-align: left; background: none; color: #fff; border: none; padding: 11px 12px 6px; font-size: 16px; line-height: 1.3; }
@@ -1462,16 +1476,24 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       `<button class="chip" data-act="settings">${esc(SPICE[settings.spice].label)}</button><button class="chip" data-act="settings">${esc(PERSONAS[settings.persona][0])}</button>`;
   }
   let shownGame = null;
+  let shownSig = '';
+  const autoAnswerOn = () => settings.autoMode !== 'off' && settings.mode === 'autopilot';
   function refreshGameUI(g) {
-    $('.gname').textContent = g ? g.name : 'Jackbox AI';
-    if (g === shownGame && $('.gamebar').dataset.ready) return;
-    shownGame = g;
+    const name = g ? (g._exact || g.name) : '';
+    $('.gname').textContent = name || 'Jackbox AI';
+    const on = autoAnswerOn();
+    const sig = (g ? g.id + '|' + (g._exact || '') + '|' + g.via : 'none') + '|' + roomCode + '|' + on;
+    if (sig === shownSig) return;
+    shownSig = sig; shownGame = g;
     const bar = $('.gamebar');
-    bar.dataset.ready = '1';
-    if (!g) { bar.innerHTML = roomCode ? `<span class="muted">📡 Room ${esc(roomCode)}${appTag ? ' · ' + esc(appTag) : ''}</span>` : ''; return; }
-    const modeTxt = isDeduction(g) ? '🕵️ Detective mode' : isAccuracy(g) ? '🎯 Accuracy mode' + (settings.webSearch ? ' + 🔎 search' : '') : SEARCH_GAMES.has(g.id) ? '🔎 Truth-finder ready' : '😂 Comedy mode';
+    const auto = `<button class="autobtn ${on ? 'on' : ''}" data-act="autoanswer">⚡ Auto ${on ? 'ON' : 'OFF'}</button>`;
+    if (!g) {
+      bar.innerHTML = `<div class="gameband"><div style="flex:1;min-width:0"><div class="gn">🔎 Detecting game…</div><div class="gm">${roomCode ? 'room ' + esc(roomCode) : 'join a game, then tap ✨'}</div></div>${auto}</div>`;
+      return;
+    }
+    const mode = isDeduction(g) ? '🕵️ Detective' : isAccuracy(g) ? '🎯 Accuracy' + (settings.webSearch ? ' + 🔎' : '') : SEARCH_GAMES.has(g.id) ? '🔎 Truth-finder' : '😂 Comedy';
     const chips = (GAME_CHIPS[g.id] || []).map((c, i) => `<button class="chip game" data-gchip="${i}">${esc(c[0])}</button>`).join('');
-    bar.innerHTML = `<div class="muted">🎮 <b>${esc(g.name)}</b> ${g.via === 'connection' ? '(confirmed)' : '(detected)'} → ${modeTxt}${roomCode ? ' · room ' + esc(roomCode) : ''}</div>${chips ? `<div class="chips" style="margin-top:6px">${chips}</div>` : ''}`;
+    bar.innerHTML = `<div class="gameband"><div style="flex:1;min-width:0"><div class="gn">🎮 ${esc(name)}</div><div class="gm">${g.via === 'connection' ? 'auto-detected ✓' : 'detected'} · ${mode}${roomCode ? ' · ' + esc(roomCode) : ''}</div></div>${auto}</div>${chips ? `<div class="chips" style="margin-top:7px">${chips}</div>` : ''}`;
   }
 
   function fillSettings() {
@@ -1716,6 +1738,12 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     else if (a === 'guide') showView('guide');
     else if (a === 'history') showView('history');
     else if (a === 'back') showView('main');
+    else if (a === 'autoanswer') {
+      if (autoAnswerOn()) { await save('autoMode', 'off'); await save('mode', 'copilot'); toast('Auto-answer OFF - tap ✨ when you want help'); }
+      else { await save('autoMode', 'prompts'); await save('mode', 'autopilot'); toast('⚡ Auto-answer ON - it reads each prompt, asks the AI, and fills it in'); }
+      refreshBadges(); refreshGameUI(shownGame);
+      return;
+    }
     else if (a === 'clearcustom') { $('.settings textarea[data-k="customPrompt"]').value = ''; root.querySelectorAll('[data-sp]').forEach((c) => c.classList.remove('on')); }
     else if (a === 'save') { const changed = await saveSettings(); if (changed) { toast('Checking your AI key…'); verifyFirst().then((msg) => msg && toast(msg)); } }
     else if (a === 'test') { await saveSettings(true); testAI(); }
@@ -1794,8 +1822,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       try {
         const txt = screenText();
         if (txt.length > 20) addObs({ text: txt.slice(0, 700) });
-        const g = detectGame(txt);
-        if (g !== shownGame) refreshGameUI(g);
+        refreshGameUI(detectGame(txt)); // sig guard inside prevents redundant redraws
       } catch (_) { /* ignore */ }
     }, 1200);
     if (settings.autoMode === 'off' || busy || drawing) return;
@@ -1829,5 +1856,6 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     }
     document.documentElement.appendChild(host);
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    try { refreshGameUI(detectGame(screenText())); } catch (_) { /* ignore */ }
   });
 })();
