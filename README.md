@@ -18,6 +18,17 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v6.0: answers every prompt, faster, funnier-first
+
+- **Fixed: Auto mode skipping the 2nd prompt.** In Quiplash-style rounds, the next prompt sometimes appeared while the box still held your last answer, so Auto thought it was done. It now spots that and answers every prompt. If you type your own answer, it still leaves you alone.
+- **Fixed: only filling one of two boxes.** On Thriplash and other multi-box screens, every answer now fills every box, and half-filled answers are thrown out.
+- **Funnier beats inappropriate.** If a clean answer is funnier for your room, it picks that over a dirty one.
+- **Faster:**
+  - Smaller prompts: drawing instructions are only sent on drawing screens.
+  - No photos sent unless the game needs them.
+  - Lighter thinking on Gemini for joke rounds.
+  - If an AI stalls, it switches to the next one after ~25s instead of 75s.
+
 ## 🆕 v5.9: built for YOUR audience
 
 Funny *to this room* is now the AI's #1 goal:

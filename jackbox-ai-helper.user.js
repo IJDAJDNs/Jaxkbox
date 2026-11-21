@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.9.0
+// @version      6.0.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -408,6 +408,7 @@
     talkingpoints: [['🎪 Max chaos', 'As assistant pick the most chaotic/funny slides; as presenter, confident improv lines.']],
   };
   const isAccuracy = (g) => !!g && ACCURACY_GAMES.has(g.id);
+  const PICTURE_GAMES = new Set(['drawful', 'teeko', 'bidiots', 'champdup', 'civic', 'patently', 'weapons', 'cookiehaus', 'nonsensory', 'junktopia', 'talkingpoints']);
   const isDeduction = (g) => !!g && DEDUCTION_GAMES.has(g.id);
 
   function fingerprint() {
@@ -569,9 +570,9 @@
     } catch (_) { return false; }
   }
 
-  function screenImages() {
+  function screenImages(withImgs) {
     const out = [];
-    for (const el of document.querySelectorAll('canvas, img')) {
+    for (const el of document.querySelectorAll(withImgs ? 'canvas, img' : 'canvas')) {
       if (out.length >= 3) break;
       if (el.closest('#jbai-host') || !isVisible(el)) continue;
       const r = el.getBoundingClientRect();
@@ -598,7 +599,9 @@
     const items = inventory();
     const text = screenText();
     const game = detectGame(text);
-    return { screenText: text, items, submitGuess: guessSubmit(items), images: screenImages(), tweak, game, kind: screenKind(items), accuracy: isAccuracy(game), search: settings.webSearch && !!game && SEARCH_GAMES.has(game.id) };
+    const kind = screenKind(items);
+    const pictureGame = kind === 'draw' || (!!game && PICTURE_GAMES.has(game.id));
+    return { screenText: text, items, submitGuess: guessSubmit(items), images: screenImages(pictureGame), tweak, game, kind, accuracy: isAccuracy(game), search: settings.webSearch && !!game && SEARCH_GAMES.has(game.id) };
   }
 
   // ===========================================================================
@@ -614,24 +617,26 @@ ACTIONS (reference elements by [index]):
 - {"do":"click","el":i}                   tap a button / choice / word / swatch (several clicks in order are fine, e.g. tapping word-bank words)
 - {"do":"draw","el":i,"shapes":[...]}     draw on a canvas
 Never put the final Submit/Send/Done in actions - give its index as "submit".
-
-DRAWING: canvas coords x 0-1000, y 0-H (H given per canvas). Shapes in order:
-  {"line":[x1,y1,x2,y2,...]} (many points for curves) | {"poly":[x1,y1,...],"fill":true} | {"circle":[cx,cy,r],"fill":true} | {"ellipse":[cx,cy,rx,ry],"fill":true} | {"rect":[x,y,w,h],"fill":true}
-Optional per shape: "color": <swatch element index> (stays selected until changed - set it whenever it changes), "brush": <brush-size element index>. "fill" scribble-fills.
-Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fills first, outlines and details on top, then the one funny detail that sells it. 15-60 shapes. Faces = eyes + expressive mouth. No written words unless the game wants labels.
+If the screen has several text boxes (Thriplash, two-part answers, etc.), EVERY option must fill EVERY box - one "type" action per box.
 
 GAME DATA (when present) is the raw state Jackbox sent to this phone - prompts, choices, player names, scores, sometimes details not drawn on screen. Trust it over guesses; never invent data. The CASE FILE is every screen this phone saw this game plus the player's own notes.
 TRUTH: if you have a web search tool, use it to verify facts (trivia, Fibbage/Lie Swatter truths, years, percentages) and say the real answer in advice. Never claim to know a hidden server-side secret (who the faker/alien is) unless it is in the data.
 
 AUDIENCE IS EVERYTHING: the goal is not "a funny joke", it is the answer THIS room will laugh hardest at and vote for. Before writing, read the room from: THE ROOM description, player names and how they talk, the ROOM READ SO FAR, and WHAT THIS ROOM REWARDED (results screens showing which answers got votes, likes or a QUIPLASH). Lean into the humor style that has been winning here and away from what flopped. If you know nothing about the room yet, aim for jokes that land with almost any group of friends: relatable, specific, surprising. Never write a joke only you would find funny, and never pick shock that this crowd won't enjoy.
 
-COMEDY: silently brainstorm 15+ ideas, throw away the first 5 (everyone else writes those), return the best. Specific beats generic (real brands, celebrities, places, oddly precise numbers). Short. Funniest word LAST. Misdirection, escalation, brutal honesty, callbacks, roast players by name (names are on screen). Every option a different angle. COMMIT to the bit: no hedging, no disclaimers, no apologies, no softening. The humor level sets how FAR you may go, not how far you must go: pick the angle that will actually get the most laughs and votes for THIS prompt - sometimes that is filthy or dark, often it is clever, absurd or painfully relatable. Across the options, mix angles (e.g. one dark, one clever, one absurd) and rank the funniest first. When dark is the right call at Edgy/Unhinged, go all the way within the one hard line (no slurs, and nothing whose punchline is that a race, religion, sexuality or disability is bad) - never water a good dark joke down. For trivia/estimates/logic: be CORRECT - think carefully, humor irrelevant.
+COMEDY: silently brainstorm 15+ ideas, throw away the first 5 (everyone else writes those), return the best. Specific beats generic (real brands, celebrities, places, oddly precise numbers). Short. Funniest word LAST. Misdirection, escalation, brutal honesty, callbacks, roast players by name (names are on screen). Every option a different angle. COMMIT to the bit: no hedging, no disclaimers, no apologies, no softening. The humor level sets how FAR you may go, not how far you must go: pick the angle that will actually get the most laughs and votes for THIS prompt - sometimes that is filthy or dark, often it is clever, absurd or painfully relatable. If a clean answer is funnier, it wins - never choose the inappropriate one just because it is allowed. Across the options, mix angles (e.g. one dark, one clever, one absurd) and rank the funniest first. When dark is the right call at Edgy/Unhinged, go all the way within the one hard line (no slurs, and nothing whose punchline is that a race, religion, sexuality or disability is bad) - never water a good dark joke down. For trivia/estimates/logic: be CORRECT - think carefully, humor irrelevant.
 
 Respond with ONLY a JSON object (no markdown, no comments):
 {"game":"<game - phase>","advice":"<one short sentence, or empty>","submit":<submit button index or null>,"suspects":[{"name":"<player>","prob":<0-100>,"why":"<evidence>"}] (ONLY in social-deduction games; probabilities across players should sum to ~100; otherwise omit),
  "options":[{"label":"<2-5 word title>","text":"<the answer as the player should see it>","score":<1-10 predicted crowd reaction or confidence>,"why":"<short reason, only if asked>","actions":[...]}]}
  Optional top-level "room": one short line updating your read of what this crowd finds funny (e.g. "loves absurd + roasting Mike, groans at gross-out"); include it whenever you learn something new.
 Lobby/waiting screen: "options":[] and a short advice.`;
+
+  // Only sent when the screen has a canvas - keeps every other request smaller and faster
+  const DRAW_RULES = `DRAWING: canvas coords x 0-1000, y 0-H (H given per canvas). Shapes in order:
+  {"line":[x1,y1,x2,y2,...]} (many points for curves) | {"poly":[x1,y1,...],"fill":true} | {"circle":[cx,cy,r],"fill":true} | {"ellipse":[cx,cy,rx,ry],"fill":true} | {"rect":[x,y,w,h],"fill":true}
+Optional per shape: "color": <swatch element index> (stays selected until changed - set it whenever it changes), "brush": <brush-size element index>. "fill" scribble-fills.
+Craft: BIG, centered, ~80% of canvas. Bold, simple, instantly recognizable. Fills first, outlines and details on top, then the one funny detail that sells it. 15-60 shapes. Faces = eyes + expressive mouth. No written words unless the game wants labels.`;
 
   function buildUserText(ctx) {
     const L = [];
@@ -679,7 +684,9 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     L.push(ctx.kind === 'draw'
       ? 'Give 2 drawing options (different ideas). If there are text boxes too, fill them in the same option.'
       : ctx.kind === 'pick' ? 'Give up to 3 options, best first.'
-        : `Give ${settings.count} options, best first.`);
+        : `Give exactly ${settings.count} options, best first.`);
+    const tf = ctx.items.filter((it) => it.kind === 'text').length;
+    if (tf >= 2) L.push(`This screen has ${tf} text boxes: EVERY option must fill ALL ${tf} of them (one "type" action per box).`);
     if (ctx.tweak) L.push('\nPLAYER REQUEST: ' + ctx.tweak);
     return L.join('\n');
   }
@@ -703,9 +710,9 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     });
   }
 
-  async function http(method, url, headers, body) {
+  async function http(method, url, headers, body, timeoutMs) {
     const data = body === undefined ? undefined : JSON.stringify(body);
-    const TIMEOUT = 75000; // a stuck service shouldn't block switching to the next one
+    const TIMEOUT = timeoutMs || 75000; // a stuck service shouldn't block switching to the next one
     const viaGM = gmRequest({ method, url, headers, data, timeout: TIMEOUT });
     let res;
     if (viaGM) res = await viaGM;
@@ -778,8 +785,8 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     const body = { model, max_tokens: 16000, system: sys, output_config: { effort }, messages: [{ role: 'user', content }] };
     if (/opus|sonnet/.test(model)) { headers['anthropic-beta'] = 'server-side-fallback-2026-07-01'; body.fallbacks = 'default'; }
     if (opt.search) body.tools = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }];
-    let res = await http('POST', 'https://api.anthropic.com/v1/messages', headers, body);
-    if (opt.search && res.status === 400) { delete body.tools; res = await http('POST', 'https://api.anthropic.com/v1/messages', headers, body); }
+    let res = await http('POST', 'https://api.anthropic.com/v1/messages', headers, body, opt.timeout);
+    if (opt.search && res.status === 400) { delete body.tools; res = await http('POST', 'https://api.anthropic.com/v1/messages', headers, body, opt.timeout); }
     if (res.status >= 400 || !res.json) throw apiErr('Claude', res);
     const d = res.json;
     if (d.stop_reason === 'refusal') { const e = new Error('Claude passed on this one'); e.retry = true; e.refusal = true; throw e; }
@@ -818,10 +825,13 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     if (opt.search) { body.tools = [{ google_search: {} }]; delete body.generationConfig.responseMimeType; } // grounding can't combine with JSON mode
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const hdr = { 'content-type': 'application/json', 'x-goog-api-key': settings.geminiKey };
-    let res = await http('POST', url, hdr, body);
+    const light = !opt.accuracy && !opt.search; // joke rounds: think less, answer faster
+    if (light) body.generationConfig.thinkingConfig = { thinkingLevel: 'low' };
+    let res = await http('POST', url, hdr, body, opt.timeout);
+    if (light && res.status === 400) { delete body.generationConfig.thinkingConfig; res = await http('POST', url, hdr, body, opt.timeout); } // older model: no thinkingLevel
     if (opt.search && [400, 403, 429].includes(res.status)) { // search quota/unsupported: answer without it
       delete body.tools; body.generationConfig.responseMimeType = 'application/json';
-      res = await http('POST', url, hdr, body);
+      res = await http('POST', url, hdr, body, opt.timeout);
     }
     if (res.status === 404) forgetModel('gemini');
     if (res.status >= 400 || !res.json) { const e = apiErr('Gemini', res); if (res.status === 404) e.retry = true; throw e; }
@@ -892,7 +902,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       const headers = { 'content-type': 'application/json' };
       if (key) headers.authorization = 'Bearer ' + key;
       if (p === 'openrouter') { headers['HTTP-Referer'] = 'https://jackbox.tv'; headers['X-Title'] = 'Jackbox AI Helper'; }
-      return http('POST', cfg.url, headers, body);
+      return http('POST', cfg.url, headers, body, opt.timeout);
     };
     let res = await send(cfg.vision(model));
     if (res.status === 400 && images.length) res = await send(false); // model can't take images
@@ -933,13 +943,18 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   function normalize(obj, ctx) {
     const n = ctx.items.length;
     const ok = (i) => i !== null && i !== '' && Number.isInteger(+i) && +i >= 0 && +i < n;
-    const options = (Array.isArray(obj.options) ? obj.options : []).map((o) => ({
+    let options = (Array.isArray(obj.options) ? obj.options : []).map((o) => ({
       label: clean(o.label, 60),
       text: String(o.text || '').trim(),
       score: Math.max(0, Math.min(10, Math.round(+o.score || 0))),
       why: clean(o.why, 200),
       actions: (Array.isArray(o.actions) ? o.actions : []).filter((a) => a && ok(a.el)).map((a) => ({ ...a, el: +a.el })),
     })).filter((o) => o.actions.length);
+    const textIdx = ctx.items.map((it, i) => (it.kind === 'text' ? i : -1)).filter((i) => i >= 0);
+    if (textIdx.length >= 2) { // drop half-answered options when complete ones exist
+      const full = options.filter((o) => textIdx.every((ti) => o.actions.some((a) => a.el === ti && (a.do === 'type' || a.do === 'set'))));
+      if (full.length) options = full;
+    }
     const suspects = (Array.isArray(obj.suspects) ? obj.suspects : [])
       .map((x) => ({ name: clean(x && x.name, 40), prob: Math.max(0, Math.min(100, Math.round(+(x && x.prob) || 0))), why: clean(x && x.why, 200) }))
       .filter((x) => x.name);
@@ -961,6 +976,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   async function ask(ctx) {
     const providers = availableProviders();
     const user = buildUserText(ctx);
+    const sys = SYSTEM_PROMPT + (ctx.kind === 'draw' || ctx.items.some((it) => it.kind === 'canvas') ? '\n\n' + DRAW_RULES : '');
     const errors = [];
     let soft = null;
     for (let i = 0; i < providers.length; i++) {
@@ -969,7 +985,9 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       let userText = user;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const { text, model } = await callProvider(p, SYSTEM_PROMPT, userText, ctx.images, i === 0, { search: ctx.search, accuracy: ctx.accuracy });
+          const isLast = i === providers.length - 1;
+          const timeout = ctx.accuracy || ctx.search ? 60000 : ctx.kind === 'draw' ? 50000 : isLast ? 60000 : 25000; // stall? switch AI sooner
+          const { text, model } = await callProvider(p, sys, userText, ctx.images, i === 0, { search: ctx.search, accuracy: ctx.accuracy, timeout });
           let obj;
           try { obj = extractJSON(text); } catch (_) { const e = new Error(PROVIDERS[p].label + ' gave a messy answer'); e.retry = true; e.parse = true; throw e; }
           const r = normalize(obj, ctx);
@@ -1233,6 +1251,11 @@ Lobby/waiting screen: "options":[] and a short advice.`;
       }
       await sleep(30);
     }
+    try {
+      const now = inventory();
+      now.forEach((i) => { if (i.kind === 'text' && fieldVal(i)) typedVals.add(fieldVal(i)); });
+      answeredPrompt = promptKey();
+    } catch (_) { /* ignore */ }
     remember({ prompt: promptSummary(ctx), answer: typedOf(opt).join(' / ') || opt.text || opt.label || (drew ? 'a drawing' : ''), game: ctx.game && ctx.game.name });
     bumpStat(drew ? 'drawings' : ctx.kind === 'pick' ? 'picks' : 'answers');
     if (submit && Number.isInteger(ctx.result.submit)) {
@@ -1770,7 +1793,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     else if (a === 'save') { const changed = await saveSettings(); if (changed) { toast('Checking your AI key…'); verifyFirst().then((msg) => msg && toast(msg)); } }
     else if (a === 'test') { await saveSettings(true); testAI(); }
     else if (a === 'go') run();
-    else if (a === 'forget') { clearMemory(); clearObs(); clearSus(); lockedGame = null; shownGame = undefined; toast('New game - memory & case file cleared'); }
+    else if (a === 'forget') { clearMemory(); clearObs(); clearSus(); lockedGame = null; shownGame = undefined; shownSig = ''; lastSig = ''; answeredPrompt = ''; typedVals.clear(); toast('New game - memory & case file cleared'); }
     else if (a === 'detective') run(DETECTIVE, false, { detective: true });
     else if (a === 'lookup') run('Verify the facts with search and give the correct / true answer. Put the real answer and confidence % in advice.', false, { search: true, accuracy: true });
     else if (a === 'win') run('Give the single highest-value move to WIN this exact screen for this game - the optimal play, using this game\'s real scoring, not just a funny one. Explain the edge in advice.', false, { accuracy: isAccuracy(shownGame), search: settings.webSearch && !!shownGame && SEARCH_GAMES.has(shownGame.id) });
@@ -1827,15 +1850,40 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   let lastSig = '';
   let debounce = null;
   let pendingSince = 0;
+  let answeredPrompt = ''; // the prompt we last filled in (top of the screen, where Jackbox shows it)
+  const screenNorm = () => screenText().replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
+  const promptKey = () => screenNorm().slice(0, 100);
+  const typedVals = new Set(); // values we typed (to spot a stale answer left over from the last prompt)
+  const fieldVal = (i) => String(i.editable ? i.el.innerText : i.el.value).trim();
+  function screenBase(items, kind) {
+    const shape = items.map((i) => i.kind + ':' + i.desc.replace(/current=("[^"]*"|\S+)/g, '').replace(/\(selected\)/g, '')).join('|');
+    return kind + '|' + screenText().replace(/\d+/g, '#').slice(0, 300) + '|' + shape;
+  }
   function signature() {
     const items = inventory();
     const kind = screenKind(items);
     if (kind === 'none') return '';
     if (settings.autoMode === 'prompts' && kind === 'pick') return '';
-    if (items.some((i) => i.kind === 'text' && String(i.editable ? i.el.innerText : i.el.value).trim())) return 'answered';
+    const base = screenBase(items, kind);
+    const filled = items.filter((i) => i.kind === 'text' && fieldVal(i));
+    if (filled.length) {
+      // the PROMPT changed but the box still holds OUR previous answer -> stale, answer it; anything else = leave it alone
+      const stale = !!answeredPrompt && !screenNorm().includes(answeredPrompt) && filled.every((i) => typedVals.has(fieldVal(i)));
+      if (!stale) return 'answered';
+    }
     if (kind === 'draw' && items.some((i) => i.kind === 'canvas' && canvasHasInk(i.el))) return 'answered';
-    const shape = items.map((i) => i.kind + ':' + i.desc.replace(/current=("[^"]*"|\S+)/g, '').replace(/\(selected\)/g, '')).join('|');
-    return kind + '|' + screenText().replace(/\d+/g, '#').slice(0, 300) + '|' + shape;
+    return base;
+  }
+  function autoCheck() {
+    try {
+      if (settings.autoMode === 'off' || busy || drawing) return;
+      const sig = signature();
+      if (!sig) { lastSig = ''; return; }
+      if (sig === 'answered' || sig === lastSig) return;
+      lastSig = sig;
+      $('.extra').value = '';
+      run('', !panel.classList.contains('open'));
+    } catch (_) { /* ignore */ }
   }
   let obsTimer = null;
   const observer = new MutationObserver(() => {
@@ -1851,18 +1899,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     const now = Date.now();
     if (!pendingSince) pendingSince = now;
     clearTimeout(debounce);
-    debounce = setTimeout(() => {
-      try {
-        pendingSince = 0;
-        if (busy || drawing) return;
-        const sig = signature();
-        if (!sig) { lastSig = ''; return; }
-        if (sig === 'answered' || sig === lastSig) return;
-        lastSig = sig;
-        $('.extra').value = '';
-        run('', !panel.classList.contains('open'));
-      } catch (_) { /* ignore */ }
-    }, Math.max(0, Math.min(900, pendingSince + 2000 - now)));
+    debounce = setTimeout(() => { pendingSince = 0; autoCheck(); }, Math.max(0, Math.min(900, pendingSince + 2000 - now)));
   });
 
   // ===========================================================================
@@ -1879,5 +1916,6 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     document.documentElement.appendChild(host);
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     try { refreshGameUI(detectGame(screenText())); } catch (_) { /* ignore */ }
+    setInterval(() => { if (!pendingSince) autoCheck(); }, 1500);
   });
 })();
