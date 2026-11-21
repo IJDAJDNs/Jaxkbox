@@ -18,6 +18,11 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v5.2: an edge for every game + committed (not soft) humor
+
+- **Every game mode has a one-tap edge.** On top of auto-detection, 38 games now have a tailored button, and there's a universal **🏆 Win this** that gives the single best move on any screen using that game's real scoring. Examples: Mad Verse City → *🎤 Rhyme + roast*, Survive the Internet → *🪤 Damning caption*, Guesspionage → *📊 Best estimate*, Role Models / Poll Mine / Survey Scramble → *📊 Read the room*, Bracketeering → *🏆 Bracket-proof*, plus the deduction and trivia tools from before. The only three games with no special help are Dodo Re Mi (rhythm) and Zeeple Dome (physics), which can't be solved by an assistant, and plain collaborative texting.
+- **Humor commits to the bit.** At Edgy/Unhinged it's told not to hedge, disclaim, apologize or soften — go genuinely dark and filthy and mean, within the one hard line (no slurs, nothing whose punchline is that a race/religion/sexuality/disability is bad). Slightly higher randomness at Unhinged for more surprising answers. If a model refuses an *allowed* dark joke, it re-asks once with the adults-only context before switching AIs.
+
 ## 🆕 v5: auto game detection, impostor hunting, truth finder
 
 - **Knows exactly which game you're in.** It reads the game info Jackbox already sends to your phone (room code → game ID), so it knows the game even when the name isn't on screen. Then it **switches to that game automatically**:
