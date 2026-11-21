@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      5.5.0
+// @version      5.6.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -1483,11 +1483,12 @@ Lobby/waiting screen: "options":[] and a short advice.`;
   }
 
   async function saveSettings(quietly) {
+    let keysChanged = false;
     for (const el of root.querySelectorAll('.settings [data-k]')) {
       const k = el.dataset.k;
       let v = el.type === 'checkbox' ? el.checked : el.value.trim();
       if (k === 'count') v = parseInt(v, 10) || 5;
-      if ((/Key$/.test(k) || k === 'customModel') && v !== settings[k]) { settings.modelCache = {}; store.set('modelCache', {}); }
+      if ((/Key$/.test(k) || k === 'customModel') && v !== settings[k]) { settings.modelCache = {}; store.set('modelCache', {}); if (/Key$/.test(k)) keysChanged = true; }
       await save(k, v);
     }
     await save('spice', +pending.spice);
@@ -1495,9 +1496,28 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     await save('mode', pending.mode);
     refreshBadges();
     lastSig = '';
-    if (quietly) return;
+    if (quietly) return keysChanged;
     showView('main');
     setOut(`<span class="muted">Saved. AI order: ${availableProviders().map((p) => PROVIDERS[p].label).join(' → ')}</span>`);
+    return keysChanged;
+  }
+
+  // Instant 'is my key working?' check: ping the first available AI
+  async function verifyFirst() {
+    const list = availableProviders();
+    let last = null;
+    for (let i = 0; i < list.length; i++) {
+      const prov = list[i];
+      try {
+        const r = await callProvider(prov, 'Reply with only a JSON object.', 'Return {"ok":true}', [], i === 0);
+        extractJSON(r.text);
+        return '✅ ' + PROVIDERS[prov].label + ' is working';
+      } catch (e) {
+        if (e.auth && PROVIDERS[prov].keyName) return '❌ ' + PROVIDERS[prov].label + ' key was rejected - re-check it in ⚙️';
+        last = e;
+      }
+    }
+    return last ? '❌ ' + clean(last.message, 80) : '';
   }
 
   function renderGuide() {
@@ -1697,7 +1717,7 @@ Lobby/waiting screen: "options":[] and a short advice.`;
     else if (a === 'history') showView('history');
     else if (a === 'back') showView('main');
     else if (a === 'clearcustom') { $('.settings textarea[data-k="customPrompt"]').value = ''; root.querySelectorAll('[data-sp]').forEach((c) => c.classList.remove('on')); }
-    else if (a === 'save') saveSettings();
+    else if (a === 'save') { const changed = await saveSettings(); if (changed) { toast('Checking your AI key…'); verifyFirst().then((msg) => msg && toast(msg)); } }
     else if (a === 'test') { await saveSettings(true); testAI(); }
     else if (a === 'go') run();
     else if (a === 'forget') { clearMemory(); clearObs(); clearSus(); lockedGame = null; shownGame = undefined; toast('New game - memory & case file cleared'); }

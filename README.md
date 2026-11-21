@@ -18,6 +18,10 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v5.6: instant key check on Save
+
+When you paste a key and tap **Save**, it now pings the AI right away and tells you **✅ Gemini is working** or **❌ key was rejected** — so you know it's set up before the game starts, no guessing.
+
 ## 🆕 v5.5: one-tap style presets
 
 The Custom Instructions box now has **tap-to-add style chips** — no typing needed. Tap one or stack several:
@@ -126,7 +130,7 @@ Optional extra free keys, so it can switch when one is busy:
 |---|---|---|---|
 | Pollinations | Free | None | Works out of the box. Slower, rate-limited, text-only (can't see drawings) |
 | **Gemini** | **Free** | Free Google key | **Best free option.** Smart, sees images, good drawings |
-| Groq | Free | Free key | Fastest. Great for short timers |
+| Groq | Free | Free key | Fastest. Great for short timers. (This is Groq — not xAI's "Grok".) |
 | OpenRouter | Free models | Free key | Extra backup |
 | Claude | Paid (cents) | Paid key | Funniest answers, best art |
 
