@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      10.0.0
+// @version      11.0.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -35,6 +35,18 @@
   let roomCode = null;
   let appTag = null;
   let wsSeen = false;
+  // ---- efficiency: reuse expensive page reads until the page actually changes ----
+  let domVersion = 0; // bumped by the MutationObserver
+  let entVersion = 0; // bumped when new game data arrives
+  const memo = {};
+  const memoOk = (m, v) => !!m && (Date.now() - m.t < 600 || (m.v === v && Date.now() - m.t < 800));
+  function cached(name, version, compute) {
+    const m = memo[name];
+    if (memoOk(m, version)) return m.r;
+    const r = compute();
+    memo[name] = { v: version, t: Date.now(), r };
+    return r;
+  }
   let wsHudTimer = null; // re-pin X-ray labels shortly after new game data arrives
   (function tapSocket() {
     const hook = `(() => { if (window.__jbaiWS) return; window.__jbaiWS = 1; const W = window.WebSocket; if (!W) return;
@@ -71,7 +83,7 @@
         }
         onWsMessage(m.data);
         clearTimeout(wsHudTimer);
-        wsHudTimer = setTimeout(() => { try { dataHud(); const g = detectGame(screenText()); if (g && g.id === 'bidiots') { captureBidTips(screenText()); bidHud(); } } catch (_) { /* ignore */ } }, 300);
+        wsHudTimer = setTimeout(() => { if (document.hidden) return; try { dataHud(); const g = detectGame(screenText()); if (g && g.id === 'bidiots') { captureBidTips(screenText()); bidHud(); } } catch (_) { /* ignore */ } }, 300);
       } catch (_) { /* never let a stray message break anything */ }
     });
   })();
@@ -96,6 +108,7 @@
     const put = (key, val) => {
       if (typeof val === 'string') { try { val = JSON.parse(val); } catch (_) { /* keep string */ } }
       entities.set(String(key), { val: compactJSON(val, 0), t: Date.now() });
+      entVersion++;
       if (entities.size > 40) entities.delete(entities.keys().next().value);
     };
     const r = msg.result || msg.params || msg.body;
@@ -118,7 +131,8 @@
   // X-ray: every value the game sent to THIS phone that looks like a hidden number/answer/role
   const SECRET_KEY_RE = /^(price|prices|value|values|worth|cost|bid|minbid|maxbid|highbid|money|cash|amount|correct|iscorrect|correctanswer|answer|truth|istruth|real|isreal|secret|role|isimpostor|impostor|isalien|alien|faker|isfaker|liar|isliar|points|score|winner|rank|percent|percentage|year|multiplier|bonus)$/i;
   const LABEL_KEYS = ['text', 'name', 'title', 'label', 'choice', 'caption', 'word', 'prompt', 'artist'];
-  function xrayScan() {
+  function xrayScan() { return cached('xray', entVersion, xrayScanRaw); }
+  function xrayScanRaw() {
     const fields = []; const pairs = []; let nodes = 0;
     const walk = (v, path, depth) => {
       if (nodes++ > 1500 || depth > 7 || v === null || typeof v !== 'object') return;
@@ -165,6 +179,10 @@
   }
   // turn tip sentences into facts: { title, exact | min | max | tier }
   function parseBidTips() {
+    let raw = ''; try { raw = sessionStorage.getItem(BIDTIP_KEY) || ''; } catch (_) { /* ignore */ }
+    return cached('bidtips', raw, parseBidTipsRaw);
+  }
+  function parseBidTipsRaw() {
     const facts = {};
     for (const { text } of loadBidTips()) {
       let title = null;
@@ -262,6 +280,48 @@
     return L.join('\n');
   }
   // deterministic overlay: no AI needed when the painting matches a tip
+  // ===========================================================================
+  // Truth catcher (Fibbage / Drawful): the game REJECTS a lie that is the real answer -
+  // so a rejected submission tells us the truth for the voting round
+  // ===========================================================================
+  const TRUTH_REJECT_RE = /(that'?s (actually )?the (truth|real answer|correct answer|right answer|real title)|that is the (truth|real answer|correct answer)|you (entered|typed|wrote|guessed) the (truth|real answer|correct answer|right answer|real title)|too close to the (truth|real answer|correct answer|real title|answer)|is (actually )?the (real|correct) (answer|title)|oops[^.\n]{0,40}(truth|real answer|correct answer|real title))/i;
+  const TRUTH_KEY = 'jbai_truths';
+  const loadTruths = () => { try { return JSON.parse(sessionStorage.getItem(TRUTH_KEY)) || []; } catch (_) { return []; } };
+  const truthGame = (g) => !g || g.id === 'fibbage' || g.id === 'drawful';
+  let lastSubmitted = null; // { vals, t } - what was in the answer box when Submit was pressed
+  function noteSubmit(e) {
+    try {
+      const b = e.target && e.target.closest && e.target.closest('button, [role="button"], input[type="submit"]');
+      if (!b) return;
+      if (!SUBMIT_RE.test(clean(b.textContent || b.value || b.getAttribute('aria-label'), 40))) return;
+      const vals = inventory(true).filter((i) => i.kind === 'text').map(fieldVal).filter(Boolean);
+      if (vals.length) lastSubmitted = { vals, t: Date.now() };
+    } catch (_) { /* ignore */ }
+  }
+  function truthCatch(txt) {
+    if (!lastSubmitted || Date.now() - lastSubmitted.t > 30000 || !TRUTH_REJECT_RE.test(txt)) return;
+    const truth = lastSubmitted.vals[0]; lastSubmitted = null;
+    const list = loadTruths();
+    if (list.some((x) => normTitle(x.truth) === normTitle(truth))) return;
+    list.push({ truth, t: Date.now() });
+    try { sessionStorage.setItem(TRUTH_KEY, JSON.stringify(list.slice(-20))); } catch (_) { /* ignore */ }
+    toast('🎯 Game confirmed the REAL answer: "' + clean(truth, 40) + '" - write another lie, then vote for it!');
+    if (settings.autoMode !== 'off' && !busy) run(`The game REJECTED "${truth}" because it IS the real answer. Write believable lies that are clearly NOT this answer.`, !panel.classList.contains('open'));
+  }
+  // pin ✅ on the confirmed truth when the voting choices show up - no AI needed
+  function truthHud() {
+    if (!settings.hud) return;
+    const truths = loadTruths(); if (!truths.length) return;
+    const choices = inventory().filter((i) => i.kind === 'click'); if (choices.length < 2) return;
+    const out = [];
+    for (const { truth } of truths) {
+      const k = normTitle(truth); if (k.length < 2) continue;
+      const hit = choices.find((i) => { const d = normTitle(i.desc.replace(/^button "|"( \(selected\))?$/g, '')); return d === k || (k.length >= 4 && (d.includes(k) || (d.length >= 4 && k.includes(d)))); });
+      if (hit) out.push({ el: hit.el, text: '✅ REAL ANSWER (game confirmed)', cls: 'best', ring: true });
+    }
+    if (out.length) addHud(out, hudPill || '🎯 The game confirmed the real answer - vote for the green one');
+  }
+
   function bidHud() {
     if (!settings.hud) return;
     const g = detectGame(screenText());
@@ -423,7 +483,7 @@
     m.push({ ...entry, t: Date.now() });
     try { sessionStorage.setItem(MEM_KEY, JSON.stringify(m.slice(-30))); } catch (_) { /* ignore */ }
   }
-  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); sessionStorage.removeItem('jbai_roomread'); sessionStorage.removeItem('jbai_bidtips'); } catch (_) { /* ignore */ } };
+  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); sessionStorage.removeItem('jbai_roomread'); sessionStorage.removeItem('jbai_bidtips'); sessionStorage.removeItem('jbai_truths'); } catch (_) { /* ignore */ } };
   function bumpStat(k) {
     let s = {};
     try { s = JSON.parse(sessionStorage.getItem(STATS_KEY)) || {}; } catch (_) { /* ignore */ }
@@ -536,8 +596,8 @@
   const SEARCH_GAMES = new Set(['tmp', 'ydkj', 'lieswatter', 'wheel', 'timejinx', 'quixort', 'fibbage', 'guesspionage']);
   const DETECTIVE = 'DETECTIVE: Using the CASE FILE, GAME DATA and the screen, work out who the impostor(s) are. Compare every answer to what the real prompt/task was, look for vague, hedged, off-topic or copied answers, odd timing notes, suspicious votes and defending. In advice rank the suspects with a % each and the key evidence. Options = the vote/accuse buttons for your top suspects, best first, each with "why". If the screen says YOU are the impostor/alien/faker: instead give answers and moves that blend in and frame someone else.';
   const GAME_CHIPS = {
-    fibbage: [['🕵️ Find the truth', 'Voting: identify which choice is the REAL answer. Verify with search if you can. Put the real answer and your confidence % in advice; option 1 = tap the truth.', true], ['🚫 What is the real answer?', 'Tell me the REAL answer to this question in advice (so I avoid typing it) and give lies that sound more true than the truth.', true], ['🤥 Sneakier lie', 'Lies that sound boringly, specifically TRUE - same style and length as a real answer, nothing jokey.']],
-    drawful: [['📷 Snap the TV', 'TVCAM'], ['🕵️ Real title?', 'Voting: which title is the real prompt for this drawing? Confidence % in advice.'], ['🤥 Better lie', 'Lies that sound like real Drawful prompts for this drawing.']],
+    fibbage: [['🧪 Probe the truth', 'Give as option 1 your single best guess of the REAL answer, written plainly like a real answer (it doubles as a believable lie): if it is the truth the game rejects it and the helper learns the real answer for voting. Options 2+ are normal believable lies.'], ['🕵️ Find the truth', 'Voting: identify which choice is the REAL answer. Verify with search if you can. Put the real answer and your confidence % in advice; option 1 = tap the truth.', true], ['🚫 What is the real answer?', 'Tell me the REAL answer to this question in advice (so I avoid typing it) and give lies that sound more true than the truth.', true], ['🤥 Sneakier lie', 'Lies that sound boringly, specifically TRUE - same style and length as a real answer, nothing jokey.']],
+    drawful: [['📷 Snap the TV', 'TVCAM'], ['🧪 Probe the title', 'Give as option 1 your best guess of the REAL title of this drawing, worded like a real Drawful prompt (it doubles as a believable lie): if it is the real title the game rejects it and the helper learns it for voting. Options 2+ are normal believable lies.'], ['🕵️ Real title?', 'Voting: which title is the real prompt for this drawing? Confidence % in advice.'], ['🤥 Better lie', 'Lies that sound like real Drawful prompts for this drawing.']],
     tmp: [['🔎 Look it up', 'Verify the answer with search before answering. Put the correct answer and source in advice.', true], ['🧮 Solve carefully', 'This is a minigame/puzzle: reason step by step and double-check before answering. Explain the rule in advice.']],
     ydkj: [['🔎 Look it up', 'Decode the wordplay, verify with search, give the correct answer.', true]],
     lieswatter: [['🔎 Fact-check', 'Verify whether the statement is true with search. Answer correctly.', true]],
@@ -602,7 +662,11 @@
     [/quiplash/, 'Quiplash'],
   ];
   let lockedGame = null;
-  function detectGame(text) {
+  function detectGame(text, fresh) {
+    if (!fresh) return cached('game', domVersion + '|' + appTag, () => detectGameRaw(text));
+    const r = detectGameRaw(text); memo.game = { v: domVersion + '|' + appTag, t: Date.now(), r }; return r;
+  }
+  function detectGameRaw(text) {
     if (appTag) {
       const t = appTag.toLowerCase();
       const g = GAMES.find((x) => APPTAGS[x.id] && APPTAGS[x.id].test(t));
@@ -635,12 +699,12 @@
   }
 
   function onJoinScreen() {
-    const t = document.body.innerText || '';
+    const t = screenText();
     return /room\s*code/i.test(t) && /\b(play|join)\b/i.test(t) && !!document.querySelector('input');
   }
 
-  function solidColor(el) {
-    const bg = getComputedStyle(el).backgroundColor;
+  function solidColor(el, cs) {
+    const bg = (cs || getComputedStyle(el)).backgroundColor;
     if (bg && !/rgba\(\s*0,\s*0,\s*0,\s*0\s*\)|transparent/.test(bg)) return bg;
     const dc = el.getAttribute('data-color') || el.getAttribute('data-value');
     if (dc && /^#|rgb/.test(dc)) return dc;
@@ -650,7 +714,12 @@
   const SUBMIT_RE = /^(submit|send|done|confirm|lock ?in|bid|place bid|ok|okay|enter|go|vote|finish|i'?m done|send it|that'?s it)\b/i;
   const canvasSpace = (r) => ({ W: 1000, H: Math.max(1, Math.round(1000 * r.height / r.width)) });
 
-  function inventory() {
+  // fresh=true when building a prompt (input values change without DOM mutations)
+  function inventory(fresh) {
+    if (!fresh) return cached('inv', domVersion, inventoryRaw);
+    const r = inventoryRaw(); memo.inv = { v: domVersion, t: Date.now(), r }; return r;
+  }
+  function inventoryRaw() {
     const items = [];
     if (onJoinScreen()) return items;
     const seen = new Set();
@@ -661,7 +730,12 @@
     };
     const nodes = document.querySelectorAll('textarea, input, select, button, [role="button"], [role="radio"], [role="option"], [role="checkbox"], [contenteditable="true"], canvas, [data-color], [class*="color" i], [class*="swatch" i], [class*="choice" i], [class*="option" i], [class*="word" i]');
     for (const el of nodes) {
-      if (el.closest('#jbai-host') || !isVisible(el)) continue;
+      if (items.length >= 100) break; // enough - don't keep measuring the rest of the page
+      // one layout read + one style read per element, reused below
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.right < 0 || r.top > innerHeight * 3) continue;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.display === 'none' || +cs.opacity === 0) continue;
       const tag = el.tagName;
       if (tag === 'TEXTAREA' || (tag === 'INPUT' && /^(text|search|email|)$/i.test(el.type || ''))) {
         if (el.disabled || el.readOnly) continue;
@@ -678,17 +752,15 @@
         const o = [...el.options].slice(0, 40).map((x) => `${x.value}=${clean(x.text, 30)}`).join(', ');
         add(el, 'number', `dropdown current=${el.value} options: ${o}`);
       } else if (tag === 'CANVAS') {
-        const r = el.getBoundingClientRect();
         if (r.width < 120 || r.height < 120) continue;
         const { W, H } = canvasSpace(r);
         add(el, 'canvas', `canvas (drawing area) ${Math.round(r.width)}x${Math.round(r.height)}px - draw coords x 0-${W}, y 0-${H}`);
       } else if (tag !== 'INPUT') {
         if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
         const img = el.querySelector('img');
-        const text = clean(el.innerText || el.getAttribute('aria-label') || el.title || (img && img.alt), 160);
-        const r = el.getBoundingClientRect();
-        const color = solidColor(el);
-        const cs = getComputedStyle(el);
+        // textContent needs no layout (innerText does); visible buttons rarely hide text
+        const text = clean(el.textContent || el.getAttribute('aria-label') || el.title || (img && img.alt), 160);
+        const color = solidColor(el, cs);
         const btnish = tag === 'BUTTON' || el.getAttribute('role') || el.onclick || cs.cursor === 'pointer';
         const cls = typeof el.className === 'string' ? el.className : '';
         const state = el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true' || /\b(selected|active|chosen)\b/i.test(cls) ? ' (selected)' : '';
@@ -701,7 +773,12 @@
         }
       }
     }
-    return items.filter((it) => !(it.kind === 'click' && items.some((o) => o !== it && o.kind === 'click' && it.el.contains(o.el) && o.desc === it.desc)));
+    // drop a clickable wrapper whose label equals a clickable child's - only compare items that share a label
+    const byDesc = new Map();
+    for (const it of items) if (it.kind === 'click') { const g = byDesc.get(it.desc); if (g) g.push(it); else byDesc.set(it.desc, [it]); }
+    const drop = new Set();
+    for (const g of byDesc.values()) if (g.length > 1) for (const a of g) for (const o of g) if (a !== o && a.el.contains(o.el)) drop.add(a);
+    return drop.size ? items.filter((it) => !drop.has(it)) : items;
   }
 
   function guessSubmit(items) {
@@ -754,10 +831,11 @@
     return out;
   }
 
-  const screenText = () => (document.body.innerText || '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 4000);
+  const screenTextRaw = () => (document.body.innerText || '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 4000);
+  const screenText = (fresh) => { if (!fresh) return cached('text', domVersion, screenTextRaw); const r = screenTextRaw(); memo.text = { v: domVersion, t: Date.now(), r }; return r; };
 
   function screenKind(items) {
-    const drawCue = items.some((i) => i.kind === 'swatch') || /\b(draw|sketch|doodle|paint|design|decorate)/i.test(document.body.innerText || '');
+    const drawCue = items.some((i) => i.kind === 'swatch') || /\b(draw|sketch|doodle|paint|design|decorate)/i.test(screenText());
     if (drawCue && items.some((i) => i.kind === 'canvas')) return 'draw';
     if (items.some((i) => i.kind === 'text' || i.kind === 'number')) return 'write';
     if (items.filter((i) => i.kind === 'click').length >= 2) return 'pick';
@@ -765,9 +843,9 @@
   }
 
   function readContext(tweak) {
-    const items = inventory();
-    const text = screenText();
-    const game = detectGame(text);
+    const items = inventory(true);
+    const text = screenText(true);
+    const game = detectGame(text, true);
     const kind = screenKind(items);
     const pictureGame = kind === 'draw' || (!!game && PICTURE_GAMES.has(game.id));
     const images = screenImages(pictureGame);
@@ -852,6 +930,8 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
       obs.slice(wantCase ? -25 : -3).forEach((o) => L.push(o.note ? `  NOTE from player: ${o.note}` : `  SCREEN: ${clean(o.text, wantCase ? 500 : 220)}`));
     }
     if (ctx.game && ctx.game.id === 'bidiots') L.push('\n' + bidLedgerText(ctx.items, ctx.screenText));
+    const truths = truthGame(ctx.game) ? loadTruths() : [];
+    if (truths.length) L.push('\nCONFIRMED REAL ANSWERS (the game itself rejected these as lies, so they ARE the truth for their question): ' + truths.slice(-5).map((x) => '"' + clean(x.truth, 80) + '"').join(', ') + '. When voting, a choice matching one of these is the truth - pick it with score 10. When writing lies, never use these.');
     if (ctx.accuracy) L.push('\nACCURACY MODE: correctness is everything here. Ignore humor level and voice. Reason carefully, double-check, and only then answer. Give your confidence % in advice.');
     if (isDeduction(ctx.game) && !ctx.tweak) L.push('\n' + DETECTIVE);
     if (wantCase) {
@@ -2121,6 +2201,7 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
   }
 
   function hudTick() {
+    if (document.hidden) return;
     try { placeTrace(); } catch (_) { /* ignore */ }
     try {
       if (!hudItems.length && !hudPill) return;
@@ -2392,6 +2473,7 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
     return base;
   }
   function autoCheck() {
+    if (document.hidden) return; // Safari in the background: do nothing
     try {
       if (settings.autoMode === 'off' || busy || drawing) return;
       const sig = signature();
@@ -2403,9 +2485,22 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
     } catch (_) { /* ignore */ }
   }
   let obsTimer = null;
+  let obsSince = 0;
   const observer = new MutationObserver(() => {
+    domVersion++;
+    if (document.hidden) return; // catch up on visibilitychange instead
     clearTimeout(obsTimer);
-    obsTimer = setTimeout(() => {
+    const nowT = Date.now();
+    if (!obsSince) obsSince = nowT;
+    obsTimer = setTimeout(() => { obsSince = 0; screenTick(); }, Math.max(0, Math.min(1200, obsSince + 2500 - nowT)));
+    if (settings.autoMode === 'off' || busy || drawing) return;
+    const now = Date.now();
+    if (!pendingSince) pendingSince = now;
+    clearTimeout(debounce);
+    debounce = setTimeout(() => { pendingSince = 0; autoCheck(); }, Math.max(0, Math.min(900, pendingSince + 2000 - now)));
+  });
+  function screenTick() {
+    if (document.hidden) return;
       try {
         const txt = screenText();
         if (txt.length > 20) addObs({ text: txt.slice(0, 700) });
@@ -2413,14 +2508,9 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
         dataHud();
         const gNow = detectGame(txt);
         if (gNow && gNow.id === 'bidiots') { captureBidTips(txt); bidHud(); }
+        if (truthGame(gNow)) { truthCatch(txt); truthHud(); }
       } catch (_) { /* ignore */ }
-    }, 1200);
-    if (settings.autoMode === 'off' || busy || drawing) return;
-    const now = Date.now();
-    if (!pendingSince) pendingSince = now;
-    clearTimeout(debounce);
-    debounce = setTimeout(() => { pendingSince = 0; autoCheck(); }, Math.max(0, Math.min(900, pendingSince + 2000 - now)));
-  });
+  }
 
   // ===========================================================================
   // Boot
@@ -2439,6 +2529,9 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
     if (needsWelcome()) setOut(welcomeHTML());
     setInterval(() => { if (!pendingSince) autoCheck(); }, 1500);
     setInterval(hudTick, 400);
+    document.addEventListener('click', noteSubmit, true); // see what gets submitted (for the truth catcher)
+    document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) { const v = String(e.target.value || '').trim(); if (v) lastSubmitted = { vals: [v], t: Date.now() }; } }, true);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { domVersion++; try { observer.takeRecords(); } catch (_) { /* ignore */ } screenTick(); autoCheck(); } });
     addEventListener('scroll', () => renderHud(), { passive: true, capture: true });
     addEventListener('resize', () => renderHud());
     $('.hudpill').addEventListener('click', () => { panel.classList.add('open'); showView('main'); renderHud(); });

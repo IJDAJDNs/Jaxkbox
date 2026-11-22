@@ -18,6 +18,31 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v11.0: lighter on your phone + Fibbage/Drawful truth catcher
+
+**🎯 Truth catcher (Fibbage & Drawful).** If you type the *real* answer as your lie, the game rejects it ("that's the truth"). The helper now notices that and saves the rejected text as the **confirmed real answer**. When the voting choices appear, it pins **✅ REAL ANSWER (game confirmed)** on that choice, with no AI and no guessing.
+- New **🧪 Probe the truth** / **🧪 Probe the title** button: it types the AI's best guess of the real answer. If the game rejects it, you've learned the truth for voting; if it's accepted, it's a believable lie anyway.
+- A normal lie never gets mistaken for the truth.
+
+**⚡ Much lighter on your battery.** On a busy screen with a ticking timer (measured over 10 seconds):
+
+| | Before | Now |
+|---|---|---|
+| Layout reads | 5,054 | 850 (−83%) |
+| Style reads | 4,212 | 800 (−81%) |
+| Page-text reads | 1,447 | 12 (−99%) |
+| CPU time | ~105 ms | ~84 ms (−20%) |
+| **While Safari is in the background** | ~7,000 reads / 5s | **0** |
+
+How:
+- Page reads are shared and reused until the page actually changes.
+- Scanning stops once it has enough buttons.
+- Each element is measured once instead of three times.
+- The duplicate check no longer compares every element against every other.
+- Everything pauses when Safari isn't visible.
+
+Also fixed: on screens with a fast countdown timer, the per-screen work (game banner, X-ray labels, Bidiots prices) could be postponed forever. It now always runs within 2.5s.
+
 ## 🆕 v10.0: accurate Bidiots prices
 
 Bidiots values are hidden from everyone. The only true prices are the **secret tips that appear on your phone**, so the helper now prices paintings from those tips plus the game's real rules, **without needing the AI**:
