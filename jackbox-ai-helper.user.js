@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jackbox AI Helper
 // @namespace    jaxkbox
-// @version      11.0.0
+// @version      12.0.0
 // @description  Free AI sidekick for every jackbox.tv game: auto-detects the exact game from the phone's connection, writes, DRAWS, bids, votes, finds trivia/Fibbage truths with web search, hunts impostors with a case file. Free AI built in, or Gemini/Groq/OpenRouter/Claude.
 // @match        https://jackbox.tv/*
 // @match        https://*.jackbox.tv/*
@@ -205,26 +205,36 @@
     }
     return facts;
   }
-  // value + max bid for one painting
-  function priceFact(f, cash) {
+  // value + max bid for one painting. info = { title, f (tip facts), mine, tier, inferred, reason }
+  function priceFact(info, cash) {
+    if (!info || !info.title && !info.f) info = Object.assign({ f: null, mine: false, tier: null }, info || {});
+    const f = info.f;
+    const tier = info.tier;
     let lo, hi, ev, src;
     if (f && f.exact) { lo = hi = ev = f.exact; src = 'your tip'; }
     else {
-      lo = f && f.tier === 'high' ? BID.HIGH[0] : f && f.tier === 'low' ? BID.LOW[0] : BID.LOW[0];
-      hi = f && f.tier === 'high' ? BID.HIGH[1] : f && f.tier === 'low' ? BID.LOW[1] : BID.HIGH[1];
+      lo = tier === 'high' ? BID.HIGH[0] : BID.LOW[0];
+      hi = tier === 'low' ? BID.LOW[1] : BID.HIGH[1];
       if (f && f.min) lo = Math.max(lo, f.min);
       if (f && f.max) hi = Math.min(hi, f.max);
       if (hi < lo) hi = lo;
-      ev = f && (f.tier || f.min || f.max) ? (lo + hi) / 2 : BID.PRIOR;
-      src = f && f.tier ? `tip: ${f.tier}-value` : f && (f.min || f.max) ? 'tip: range' : 'no tip, game averages';
+      const known = tier || (f && (f.min || f.max));
+      ev = known ? (lo + hi) / 2 : BID.PRIOR;
+      src = info.inferred ? 'paired: ' + info.reason : tier ? `tip: ${tier}-value` : f && (f.min || f.max) ? 'tip: range' : 'no tip, game averages';
     }
-    // exact: anything under worth is profit; range: stay at the safe low end; unknown: below the average
-    let maxBid = f && f.exact ? f.exact - 100 : f && (f.tier || f.min || f.max) ? Math.max(lo - 100, Math.min(ev * 0.85, hi - 100)) : BID.PRIOR_MAX;
+    let maxBid; let note = '';
+    if (info.mine) {
+      // the artist gets HALF of any sale: rivals overpaying pays you, and winning it yourself costs you half
+      maxBid = f && f.exact ? 2 * f.exact - 100 : 2 * ev * 0.8;
+      note = ' · YOUR painting: you get half of every sale - push the price';
+    } else if (f && f.exact) maxBid = f.exact - 100; // anything under worth is profit
+    else if (tier || (f && (f.min || f.max))) maxBid = Math.max(lo - 100, Math.min(ev * 0.85, hi - 100));
+    else maxBid = BID.PRIOR_MAX;
     maxBid = Math.max(0, Math.floor(maxBid / 100) * 100);
     let loanTip = '';
     if (cash != null && maxBid > cash) {
       let bestCap = cash, bestN = 0;
-      if (f && f.exact) { // a loan is only worth it if the painting still profits after $500 interest per loan
+      if (f && f.exact && !info.mine) { // a loan is only worth it if the painting still profits after $500 interest per loan
         for (let n = 1; n <= 3; n++) {
           const cap = Math.min(maxBid, f.exact - BID.INTEREST * n - 100, cash + BID.LOAN * n);
           if (cap > bestCap) { bestCap = cap; bestN = n; }
@@ -233,7 +243,75 @@
       maxBid = Math.floor(bestCap / 100) * 100;
       if (bestN) loanTip = ` · over ${money(cash)} = ${bestN} loan${bestN > 1 ? 's' : ''} (+$500 interest), still profit`;
     }
-    return { lo, hi, ev, src, maxBid, loanTip };
+    return { lo, hi, ev, src, maxBid, loanTip, note };
+  }
+  // ---- what this player knows: own prompts, who drew what, what sold ----
+  const MYPAINT_KEY = 'jbai_mypaint', ARTIST_KEY = 'jbai_artists', SALES_KEY = 'jbai_sales';
+  const sGet = (k, d) => { try { return JSON.parse(sessionStorage.getItem(k)) || d; } catch (_) { return d; } };
+  const sSet = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* ignore */ } };
+  const NAME = "([A-Za-z0-9][A-Za-z0-9'._-]{0,15}(?: [A-Za-z0-9][A-Za-z0-9'._-]{0,15})?)";
+  const myPaintings = () => sGet(MYPAINT_KEY, []);
+  // the prompts YOU are asked to draw are your paintings
+  function captureMyPainting(txt, items) {
+    if (!items.some((i) => i.kind === 'canvas')) return;
+    for (const line of String(txt || '').split(/\n+/)) {
+      const m = line.match(/^\s*(?:please\s+)?(?:draw|paint|sketch|create)\b[^:"“\n]{0,25}[:\-–]\s*["“]?([^"”]{3,80}?)["”]?\s*[.!]?\s*$/i) // "Draw: X" / "Draw this: X"
+        || line.match(/^\s*(?:please\s+)?(?:draw|paint|sketch|create)\s*["“]([^"”]{3,80})["”]/i) // Draw "X"
+        || line.match(/^\s*(?:please\s+)?(?:draw|paint|sketch)\s+((?:a|an|the|some|two|three)\s+.{2,78}?)\s*[.!]?\s*$/i) // Draw a X
+        || line.match(/^\s*(?:your (?:prompt|painting|title))\s*[:\-–]\s*["“]?([^"”]{3,80}?)["”]?\s*$/i);
+      if (!m) continue;
+      const title = m[1].trim(); if (normTitle(title).length < 3) continue;
+      if (/^(?:your|a|an|the)?\s*(?:own\s+)?(?:masterpiece|picture|drawing|painting|art(?:work)?|something|anything|here)\b/i.test(title)) continue; // generic instructions, not a prompt
+      const list = myPaintings();
+      if (!list.some((x) => normTitle(x) === normTitle(title))) { list.push(title); sSet(MYPAINT_KEY, list.slice(-4)); }
+      return;
+    }
+  }
+  const isMine = (title) => { const k = normTitle(title); return !!k && myPaintings().some((m) => { const n = normTitle(m); return n === k || (k.length > 5 && n.length > 5 && (n.includes(k) || k.includes(n))); }); };
+  // the painting up for auction right now (title, maybe artist) as shown on the phone
+  function parseAuction(txt) {
+    const T = String(txt || '');
+    const pats = [
+      new RegExp('(?:now bidding on|bidding on|up for (?:auction|bid)|now up|next up|lot #?\\d+)\\s*[:\\-–]?\\s*["“]?([^"”\\n]{3,80}?)["”]?(?:\\s+by\\s+' + NAME + ')?\\s*$', 'im'),
+      new RegExp('["“]([^"”\\n]{3,80})["”]\\s+by\\s+' + NAME, 'i'),
+      new RegExp('^\\s*([^\\n$]{3,80}?)\\s+by\\s+' + NAME + '\\s*$', 'im'),
+    ];
+    for (const re of pats) { const m = T.match(re); if (m && normTitle(m[1]).length >= 3 && !isTipLine(m[0])) return { title: m[1].trim(), artist: m[2] ? m[2].trim().toUpperCase() : null }; }
+    return null;
+  }
+  function captureAuction(txt) {
+    const a = parseAuction(txt); if (!a || !a.artist) return;
+    const map = sGet(ARTIST_KEY, {}); const k = normTitle(a.title);
+    if (map[k] !== a.artist) { map[k] = a.artist; sSet(ARTIST_KEY, map); }
+  }
+  function captureSales(txt) {
+    const T = String(txt || ''); const sales = sGet(SALES_KEY, []); let added = false;
+    const res = [new RegExp('sold to\\s+' + NAME + '\\s+for\\s+\\$\\s?([\\d,]+)', 'ig'), new RegExp(NAME + '\\s+(?:bought|buys|won|wins|purchased)\\s+(?:["“][^"”]+["”]\\s+)?for\\s+\\$\\s?([\\d,]+)', 'ig')];
+    for (const re of res) for (const m of T.matchAll(re)) {
+      const line = m[0]; if (sales.some((x) => x.line === line)) continue;
+      sales.push({ line, buyer: m[1].toUpperCase(), price: +m[2].replace(/,/g, ''), t: Date.now() }); added = true;
+    }
+    if (added) sSet(SALES_KEY, sales.slice(-30));
+  }
+  // high or low? from a tip, or from the artist's OTHER painting (each artist has exactly one of each)
+  const tierOf = (ff) => !ff ? null : ff.tier || (ff.exact ? (ff.exact >= BID.HIGH[0] ? 'high' : 'low') : ff.min && ff.min > BID.LOW[1] ? 'high' : ff.max && ff.max < BID.HIGH[0] ? 'low' : null);
+  function paintingInfo(title) {
+    const facts = parseBidTips();
+    const k = normTitle(title);
+    const f = k ? facts[k] || Object.values(facts).find((x) => { const n = normTitle(x.title); return k.length > 5 && n.length > 5 && (n.includes(k) || k.includes(n)); }) || null : null;
+    const mine = isMine(title);
+    let tier = tierOf(f); let inferred = false; let reason = '';
+    if (!tier) {
+      const artists = sGet(ARTIST_KEY, {});
+      const artist = mine ? 'YOU' : artists[k];
+      const siblings = mine ? myPaintings().filter((m) => normTitle(m) !== k) : artist ? Object.keys(artists).filter((t) => t !== k && artists[t] === artist) : [];
+      for (const sib of siblings) {
+        const sf = facts[normTitle(sib)] || Object.values(facts).find((x) => normTitle(x.title) === normTitle(sib));
+        const st = tierOf(sf);
+        if (st) { tier = st === 'high' ? 'low' : 'high'; inferred = true; reason = `${artist === 'YOU' ? 'your' : artist + "'s"} other one is ${st}`; break; }
+      }
+    }
+    return { title: f ? f.title : title, f, mine, tier, inferred, reason };
   }
   function readCash(txt) {
     const m = String(txt || '').match(/(?:your (?:money|cash|balance)|you have|cash|balance|money)\D{0,12}\$\s?([\d,]+)/i) || String(txt || '').match(/\$\s?([\d,]+)\s*(?:left|available|in (?:the )?bank)/i);
@@ -249,34 +327,44 @@
   }
   function currentPainting(txt) {
     const facts = parseBidTips();
-    // 1) the title shown on the phone right now
+    // 1) an explicit "now bidding on X (by Y)" on the phone
+    const a = parseAuction(txt);
+    if (a) return paintingInfo(a.title);
+    // 2) a tipped title shown on the phone right now (never a tip sentence itself)
     const screenHay = ' ' + normTitle(String(txt || '').split(/\n+/).filter((l) => !isTipLine(l)).join(' ')) + ' ';
     const onScreen = matchTitle(screenHay, facts);
-    if (onScreen) return onScreen;
-    // 2) the newest game data (skipping tip messages)
+    if (onScreen) return paintingInfo(onScreen.title);
+    // 3) one of YOUR prompts shown on the phone
+    const mineShown = myPaintings().find((m) => screenHay.includes(' ' + normTitle(m) + ' '));
+    if (mineShown) return paintingInfo(mineShown);
+    // 4) the newest game data (skipping tip messages)
     const newest = [...entities.values()].sort((x, y) => y.t - x.t)[0];
     if (!newest) return null;
     const strs = []; const walk = (v, d) => { if (d > 6 || v == null) return; if (typeof v === 'string') { if (!isTipLine(v)) strs.push(v); return; } if (typeof v === 'object') Object.values(v).slice(0, 80).forEach((x) => walk(x, d + 1)); };
     walk(newest.val, 0);
-    return matchTitle(' ' + normTitle(strs.join(' | ')) + ' ', facts);
+    const hit = matchTitle(' ' + normTitle(strs.join(' | ')) + ' ', facts);
+    return hit ? paintingInfo(hit.title) : null;
   }
   function isBidScreen(items) {
     return items.some((i) => i.kind === 'number') || items.some((i) => i.kind === 'click' && /\bbid\b|\$\s?\d/i.test(i.desc));
   }
   function bidAdvice(items, txt) {
     if (!isBidScreen(items)) return null;
-    const f = currentPainting(txt);
+    const info = currentPainting(txt) || { title: null, f: null, mine: false, tier: null };
     const cash = readCash(txt);
-    const pr = priceFact(f, cash);
+    const pr = priceFact(info, cash);
     const target = items.find((i) => i.kind === 'number') || items.find((i) => i.kind === 'click' && /\bbid\b/i.test(i.desc)) || items.find((i) => i.kind === 'click' && /\$\s?\d/.test(i.desc));
-    return { f, cash, pr, target };
+    return { info, f: info.f, cash, pr, target };
   }
   function bidLedgerText(items, txt) {
     const tips = loadBidTips();
-    const L = ['BIDIOTS LEDGER (tips this player saw on their phone - these are the TRUE prices; use them before any guess):'];
+    const L = ['BIDIOTS LEDGER (what this player knows - TRUE information; use it before any guess):'];
     if (tips.length) tips.slice(-15).forEach((t) => L.push('  TIP: ' + clean(t.text, 200))); else L.push('  (no tips seen yet)');
+    const mp = myPaintings(); if (mp.length) L.push('  MY PAINTINGS (I drew these - I get HALF of their sale price): ' + mp.map((x) => '"' + clean(x, 60) + '"').join(', '));
+    const arts = sGet(ARTIST_KEY, {}); const ak = Object.keys(arts); if (ak.length) L.push('  WHO DREW WHAT: ' + ak.slice(-12).map((k) => `"${k}" by ${arts[k]}`).join(', '));
+    const sales = sGet(SALES_KEY, []); if (sales.length) L.push('  SALES SO FAR: ' + sales.slice(-10).map((x) => `${x.buyer} paid ${money(x.price)}`).join('; '));
     const ba = bidAdvice(items, txt);
-    if (ba) L.push(`CALCULATED for the painting on screen${ba.f ? ' "' + ba.f.title + '"' : ' (not matched to a tip - identify it from the TV photo or screen and match it to the tips yourself)'}: worth ${ba.pr.lo === ba.pr.hi ? money(ba.pr.ev) : money(ba.pr.lo) + '-' + money(ba.pr.hi)} (${ba.pr.src}), max bid ${money(ba.pr.maxBid)}${ba.cash != null ? ', player cash ' + money(ba.cash) : ''}${ba.pr.loanTip}. Use these numbers unless you can identify the painting more precisely.`);
+    if (ba) L.push(`CALCULATED for the painting on screen${ba.info.title ? ' "' + ba.info.title + '"' : ' (not identified - identify it from the TV photo or screen and match it to the tips yourself)'}${ba.info.mine ? ' (MY painting)' : ''}: worth ${ba.pr.lo === ba.pr.hi ? money(ba.pr.ev) : money(ba.pr.lo) + '-' + money(ba.pr.hi)} (${ba.pr.src}), max bid ${money(ba.pr.maxBid)}${ba.cash != null ? ', player cash ' + money(ba.cash) : ''}${ba.pr.loanTip}${ba.pr.note}. Use these numbers unless you can identify the painting more precisely.`);
     return L.join('\n');
   }
   // deterministic overlay: no AI needed when the painting matches a tip
@@ -329,9 +417,14 @@
     const items = inventory(); const txt = screenText();
     const ba = bidAdvice(items, txt);
     if (!ba || !ba.target) return;
-    const worth = ba.pr.lo === ba.pr.hi ? money(ba.pr.ev) : money(ba.pr.lo) + '–' + money(ba.pr.hi);
-    addHud([{ el: ba.target.el, text: '🛑 max bid ' + money(ba.pr.maxBid), cls: 'best', ring: true }],
-      hudPill || ('💰 ' + (ba.f ? '"' + clean(ba.f.title, 40) + '" ' : 'Unknown painting ') + 'worth ' + worth + ' (' + ba.pr.src + ') → stop at ' + money(ba.pr.maxBid) + ba.pr.loanTip));
+    const pr = ba.pr; const inf = ba.info;
+    const worth = pr.lo === pr.hi ? money(pr.ev) : money(pr.lo) + '–' + money(pr.hi);
+    const name = inf.title ? '"' + clean(inf.title, 36) + '"' : 'Unknown painting';
+    // action + number first, reasoning after (the bar is only 3 lines)
+    const pill = inf.mine
+      ? `🎨 YOURS ${name} → push to ${money(pr.maxBid)} (you get half of any sale) · worth ${worth}, ${pr.src}`
+      : `💰 ${name} → stop at ${money(pr.maxBid)} · worth ${worth}, ${pr.src}${pr.loanTip}`;
+    addHud([{ el: ba.target.el, text: (inf.mine ? '🎨 push to ' : '🛑 max bid ') + money(pr.maxBid), cls: 'best', ring: true }], hudPill || pill);
   }
 
   function gameData() {
@@ -483,7 +576,7 @@
     m.push({ ...entry, t: Date.now() });
     try { sessionStorage.setItem(MEM_KEY, JSON.stringify(m.slice(-30))); } catch (_) { /* ignore */ }
   }
-  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); sessionStorage.removeItem('jbai_roomread'); sessionStorage.removeItem('jbai_bidtips'); sessionStorage.removeItem('jbai_truths'); } catch (_) { /* ignore */ } };
+  const clearMemory = () => { try { sessionStorage.removeItem(MEM_KEY); sessionStorage.removeItem(STATS_KEY); sessionStorage.removeItem('jbai_obs'); sessionStorage.removeItem('jbai_suspects'); sessionStorage.removeItem('jbai_roomread'); sessionStorage.removeItem('jbai_bidtips'); sessionStorage.removeItem('jbai_truths'); ['jbai_mypaint', 'jbai_artists', 'jbai_sales'].forEach((k) => sessionStorage.removeItem(k)); } catch (_) { /* ignore */ } };
   function bumpStat(k) {
     let s = {};
     try { s = JSON.parse(sessionStorage.getItem(STATS_KEY)) || {}; } catch (_) { /* ignore */ }
@@ -538,7 +631,7 @@
     { id: 'fibbage', name: 'Fibbage', re: /fibbage|fourbage|enough about you|deep dive/, guide: 'Write a LIE for a fill-in-the-blank fact so other players pick it as the truth. Match the length, style and specificity of a real answer; plausible beats funny (unless it is a likes/funny round). Never type the real answer - the game rejects it. Voting: pick the most likely TRUTH (real answers are oddly specific and weird). Enough About You: lies about a player\'s personal answer - match their voice. Like the funniest lies.', tips: ['Lies should sound boring-true', 'Guess the truth: weirdest specific option', 'Avoid answers that sound like jokes'] },
     { id: 'tmp', name: 'Trivia Murder Party', re: /trivia ?murder|triviadeath|killing ?floor|killing ?room/, guide: 'Trivia: pick the correct answer. Death minigames (Killing Floor): read the rules and survive - solve math, pick the right chalice by logic, choose the real dictionary definition, memory, etc. Reason carefully; accuracy over humor. Finale: race to escape - choose ALL options that fit the category. As a ghost, keep answering.', tips: ['Accuracy > speed', 'In minigames read every rule', 'Finale: pick all that fit'] },
     { id: 'drawful', name: 'Drawful', re: /drawful/, guide: 'Draw the given prompt so players can GUESS it (you score when they find the real title). Then write lies (fake titles) for others\' drawings that sound like real Drawful prompts. Then pick the real title. Animate: two-frame animation of the prompt. Dirty Drawful: adult prompts.', tips: ['Draw the KEY visual idea big', 'Lies: plausible weird titles', 'Real titles are oddly specific'] },
-    { id: 'bidiots', name: 'Bidiots', re: /bidiots|auction|place bid/, guide: 'RULES: every artist draws 2 paintings - one HIGH value ($3,000-$5,000) and one LOW value ($500-$2,500); nobody knows which, not even the artist. Each player privately gets ~3 tips about what some paintings are worth (different tips for each player). Everyone starts with $3,000; the ARTIST receives HALF of the sale price. Loans: $1,000 each, max 3, each costs $500 interest at the end. Final score = cash + worth of paintings owned - loans and interest. STRATEGY: buy only below worth; a tipped exact value is truth; unknown paintings average about $2,750 but are risky; if one painting by an artist is known to be high, their other one is low (and vice versa); buying your OWN painting effectively costs half (you get the commission back); push opponents to overpay on paintings you know are low. Draw exactly the prompt when drawing.', tips: ['Tips on your phone are the only true prices - the helper logs them all', 'Each artist has 1 high ($3-5k) + 1 low ($0.5-2.5k) painting', 'You start with $3,000; artist gets half the sale', 'Loan = +$1,000 now, -$1,500 at the end'] },
+    { id: 'bidiots', name: 'Bidiots', re: /bidiots|auction|place bid/, guide: 'RULES: every artist draws 2 paintings - one HIGH value ($3,000-$5,000) and one LOW value ($500-$2,500); nobody knows which, not even the artist. Each player privately gets ~3 tips about what some paintings are worth (different tips for each player). Everyone starts with $3,000; the ARTIST receives HALF of the sale price. Loans: $1,000 each, max 3, each costs $500 interest at the end. Final score = cash + worth of paintings owned - loans and interest. STRATEGY: (1) a tipped exact value is truth - buy only below it; (2) each artist has exactly one high and one low painting, so a tip about one painting reveals the tier of the same artist\'s other painting; (3) YOUR paintings: you get half of every sale, so push their price up - rivals overpaying pays you, and winning it yourself only costs half (worth it up to ~2x its value); (4) unknown paintings average ~$2,750 but range $500-$5,000 - stay under ~$2,200 without info; (5) cash left at the end counts the same as paintings, so never overpay just to win; (6) loans only when a known painting still profits after the $500 interest; (7) when drawing: if you know your painting is HIGH value draw it very clearly so tip-holders recognize it and bid high; if it is LOW value make it look impressive so others overpay.', tips: ['Tips on your phone are the only true prices - the helper logs them all', 'Each artist has 1 high ($3-5k) + 1 low ($0.5-2.5k) painting', 'You start with $3,000; artist gets half the sale', 'Loan = +$1,000 now, -$1,500 at the end'] },
     { id: 'earwax', name: 'Earwax', re: /earwax/, guide: 'Pick two sound effects from your hand that best answer the judge\'s prompt. Choose the most absurd but fitting combo.', tips: ['Weird combos win', 'Think like the judge'] },
     { id: 'bombcorp', name: 'Bomb Corp', re: /bomb ?corp|bombintern|defuse/, guide: 'Cooperative bomb defusal: follow the on-screen rules / manual exactly and give the precise step-by-step solution (which wires, buttons, order). Accuracy, not humor.', tips: ['Read rules top to bottom', 'Say steps in order'] },
     { id: 'wordspud', name: 'Word Spud', re: /word ?spud/, guide: 'Continue the previous word to form a funny compound word or phrase. Short and clever.', tips: ['One or two words', 'Aim for a funny phrase'] },
@@ -898,7 +991,7 @@ Craft (this is what makes it look good) - build in layers:
 BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanishes on a phone). Use 3-5 colors from the swatches (tap a swatch with "color" when it changes); if there are no swatches, use outlines + a few fills. Curves need 8+ points. 15-60 shapes, at most ~12 filled ones (fills are slow). No written words unless the game wants labels. Only use a "brush" index if you are sure that element is a brush-size button.`;
 
   const DRAW_NOTES = {
-    bidiots: 'BIDIOTS: your painting is valued by how well it matches the prompt - draw EXACTLY the prompt, clear and recognizable, no jokes that change its meaning.',
+    bidiots: 'BIDIOTS: values are fixed by the prompt (one high, one low per artist), and the artist gets HALF of the sale price - so make every painting look like a masterpiece that people want to bid on: clear, colorful, impressive, exactly the prompt. If the player knows this one is high value, make it instantly recognizable so tip-holders bid high.',
     drawful: 'DRAWFUL: make the prompt guessable - the key identifying element front and center, not too literal, not abstract.',
     teeko: 'TEE K.O.: a bold, iconic, funny centered image that works with many slogans (it goes on a T-shirt).',
     champdup: "CHAMP'D UP: a full character (head, body, pose, outfit) that embodies the category; exaggerate the trait.",
@@ -2219,7 +2312,7 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
       <div class="section">💎 Notable values (${fields.length})</div>
       ${fields.length ? '<div class="xr">' + fields.map((f) => esc(f.path) + ' = <b>' + esc(JSON.stringify(f.value)) + '</b>').join('\n') + '</div>' : '<div class="muted">None on this screen. Secret answers and prices usually stay on the host (TV/PC) and never reach phones - then the AI estimates instead.</div>'}
       ${(() => { const tips = loadBidTips(); if (!tips.length) return ''; const facts = Object.values(parseBidTips());
-        return '<div class="section">💰 Bidiots tips logged (' + tips.length + ')</div>' + (facts.length ? '<div class="xr">' + facts.map((f) => { const pr = priceFact(f, null); return esc(f.title) + ' → <b>' + (pr.lo === pr.hi ? money(pr.ev) : money(pr.lo) + '–' + money(pr.hi)) + '</b> · max bid ' + money(pr.maxBid); }).join('\n') + '</div>' : '') + '<div class="xr">' + tips.map((t) => esc(t.text)).join('\n') + '</div>'; })()}
+        return '<div class="section">💰 Bidiots tips logged (' + tips.length + ')</div>' + (facts.length ? '<div class="xr">' + facts.map((f) => { const pr = priceFact(paintingInfo(f.title), null); return esc(f.title) + ' → <b>' + (pr.lo === pr.hi ? money(pr.ev) : money(pr.lo) + '–' + money(pr.hi)) + '</b> · max bid ' + money(pr.maxBid); }).join('\n') + '</div>' : '') + '<div class="xr">' + tips.map((t) => esc(t.text)).join('\n') + '</div>'; })()}
       <div class="section">🧾 Raw game data</div>
       <div class="xr">${raw ? esc(raw.slice(0, 12000)) : 'Nothing yet.'}</div>
       <div class="row" style="margin-top:8px"><button class="btn" data-act="xrayrefresh">↻ Refresh</button></div>`;
@@ -2507,7 +2600,7 @@ BIG and centered (~80% of the canvas). Nothing smaller than ~20 units (it vanish
         refreshGameUI(detectGame(txt)); // sig guard inside prevents redundant redraws
         dataHud();
         const gNow = detectGame(txt);
-        if (gNow && gNow.id === 'bidiots') { captureBidTips(txt); bidHud(); }
+        if (gNow && gNow.id === 'bidiots') { const its = inventory(); captureBidTips(txt); captureMyPainting(txt, its); captureAuction(txt); captureSales(txt); bidHud(); }
         if (truthGame(gNow)) { truthCatch(txt); truthHud(); }
       } catch (_) { /* ignore */ }
   }

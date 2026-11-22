@@ -18,6 +18,30 @@ It recognises **43 Jackbox games** from Party Packs 1–11 and the standalones, 
 | 🗳️ Voting | Every game | Picks what the room will vote for, or the **real answer** in Fibbage and Drawful |
 | 🕵️ Social deduction | Push the Button, Fakin' It, Hypnotorious | Strategy for blending in or catching the impostor |
 
+## 🆕 v12.0: the best Bidiots strategy, built in
+
+The Bidiots engine now plays the math of the real rules, not just "bid below the tip":
+
+1. **🎨 Your own paintings are a goldmine.** The artist gets half of every sale. When your painting is up, the helper says **push the price**: if a rival wins, they pay more and you get half; if you win it, it only costs you half. It pins **🎨 push to $X** on the bid slider.
+2. **🔗 One high, one low per artist.** Every artist has exactly one $3–5k painting and one $0.5–2.5k painting, so a tip about one reveals the other. If Mike's "Haunted toaster" is tipped valuable, his other painting is shown as **low**, with reasoning like *"paired: MIKE's other one is high"*.
+3. **✏️ It knows your prompts.** It saves the two prompts you're asked to draw, so it recognizes your paintings at auction and works out which of your two is the high one.
+4. **🖼️ Who drew what + sales.** It tracks the artist of each painting ("by MIKE") and every sale ("SOLD to MIKE for $2,400"), and gives all of it to the AI.
+5. **Smart limits:**
+   - Exact tip → bid under its worth.
+   - Known tier → stay in the safe part of the range.
+   - Nothing known → stay under $2,200.
+   - Never more than your cash, and loans only when you'd still profit after the $500 interest.
+6. **Drawing tip:** make every painting look like a masterpiece people want to bid on, since you get half of what they pay.
+
+Example from testing (no AI calls):
+| On the block | Helper's reasoning | Advice |
+|---|---|---|
+| Mike's "Haunted toaster" | your tip: high-value | stop at $3,000 (all your cash) |
+| Mike's "Pickle king" | paired: Mike's other one is high → this is low | stop at $1,200 |
+| YOUR "Sad robot" | paired: your other one is high → this is your low one | 🎨 push to $2,400 |
+| YOUR "A frog in a tuxedo" | your tip: $4,200 | 🎨 push to $3,000 |
+| Sarah's "Laser cat" | nothing known | stop at $2,200 |
+
 ## 🆕 v11.0: lighter on your phone + Fibbage/Drawful truth catcher
 
 **🎯 Truth catcher (Fibbage & Drawful).** If you type the *real* answer as your lie, the game rejects it ("that's the truth"). The helper now notices that and saves the rejected text as the **confirmed real answer**. When the voting choices appear, it pins **✅ REAL ANSWER (game confirmed)** on that choice, with no AI and no guessing.
